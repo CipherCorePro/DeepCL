@@ -125,12 +125,57 @@ graph TD
         C_API -- "Nutzt" --> C_Context["OpenCL Kontext"]
     end
 
-    style GPU fill:#f9d,stroke:#333,stroke-width:2px
-    style C_Driver fill:#ccf,stroke:#333,stroke-width:1px
-    style C_API fill:#ddf,stroke:#333,stroke-width:1px
+    %% Explizites Styling für alle Knoten mit schwarzer Schrift
+    style P_Data fill:#fff,stroke:#333,color:#000
+    style P_TrainLoop fill:#fff,stroke:#333,color:#000
+    style P_Model fill:#fff,stroke:#333,color:#000
+    style P_Layers fill:#fff,stroke:#333,color:#000
+    style P_Loss fill:#fff,stroke:#333,color:#000
+    style P_GPU_T fill:#fff,stroke:#333,color:#000
+    style C_Queue fill:#fff,stroke:#333,color:#000
+    style C_Mem fill:#fff,stroke:#333,color:#000
+    style C_Kernels fill:#fff,stroke:#333,color:#000
+    style C_Context fill:#fff,stroke:#333,color:#000
+
+    %% Beibehalten/Anpassen der spezifischen Farben und Hinzufügen von color:#000
+    style GPU fill:#f9d,stroke:#333,stroke-width:2px,color:#000
+    style C_Driver fill:#ccf,stroke:#333,stroke-width:1px,color:#000
+    style C_API fill:#ddf,stroke:#333,stroke-width:1px,color:#000
 
 ```
+```mermaid
+graph TD
+    subgraph "BioInspiredAssociativeLayer (Intern)"
+        Input["➡️ Embedding Vektor<br/>(Input zur Schicht)"]
 
+        Input --> GradPath["1️⃣ Gradienten-Pfad<br/>• Linear(W1, b1)<br/>• GELU Aktivierung"]
+
+        %% Das Ergebnis des Gradienten-Pfads ist der zentrale Punkt
+        GradPath -- "Erzeugt" --> HiddenAct["🧠 Hidden Activations<br/>(Haupt-Output & Input für andere Pfade)"]
+
+        %% Die anderen Pfade nutzen die Hidden Activations
+        HiddenAct --> HebbPath["2️⃣ Hebbian Pfad<br/>• Spikes (Thresholding)<br/>• Hebbian Update"]
+        HebbPath --> WhebbUpdate["🔄 W_hebb Update<br/>(beeinflusst zukünftige Zustände)"]
+
+        HiddenAct --> ProtoPath["3️⃣ Prototypen Pfad<br/>• Ähnlichkeit/Zuweisung<br/>• Prototypen-Update"]
+        ProtoPath --> ProtoUpdate["🔄 Prototypen Update<br/>(interne Zustandsanpassung)"]
+        ProtoPath -- "(Erzeugt)" --> TokenIndices["🔢 Token Indices<br/>(Interner Zustand)"]
+
+        %% Der Haupt-Output an die nächste Schicht
+        HiddenAct --> Output["📤 Haupt-Output<br/>(an nächste Schicht)"]
+    end
+
+    %% Styling - Jetzt mit expliziter schwarzer Schrift (color:#000) für alle
+    style Input fill:#cfe2ff,stroke:#084298,color:#000
+    style GradPath fill:#d1e7dd,stroke:#0a3622,color:#000
+    style HiddenAct fill:#f0f8ff,stroke:#333,font-weight:bold,color:#000
+    style HebbPath fill:#fde2e4,stroke:#6e0d25,color:#000
+    style WhebbUpdate fill:#fde2e4,stroke:#6e0d25,stroke-dasharray: 5 5,color:#000
+    style ProtoPath fill:#fff3cd,stroke:#664d03,color:#000
+    style ProtoUpdate fill:#fff3cd,stroke:#664d03,stroke-dasharray: 5 5,color:#000
+    style TokenIndices fill:#fff3cd,stroke:#664d03,stroke-dasharray: 5 5,color:#000
+    style Output fill:#dee2e6,stroke:#343a40,font-weight:bold,color:#000
+```
 ---
 
 ## 🧠 Effizienzanalyse: BioInspired-GPU-Training mit OpenCL
