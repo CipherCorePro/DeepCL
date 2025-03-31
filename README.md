@@ -42,7 +42,7 @@
     *   [Starten des Trainings](#starten-des-trainings)
     *   [Monitoring & Interpretation der Ausgabe](#monitoring--interpretation-der-ausgabe)
     *   [Checkpointing](#checkpointing)
-    *   [Textgenerierung (Konzept)](#textgenerierung-konzept)
+    *   [Textgenerierung ](#textgenerierung-konzept)
 8.  [Detaillierte API-Referenz der C-Bibliothek](#8-detaillierte-api-referenz-der-c-bibliothek)
     *   [Grundlegende Typen & Handles](#grundlegende-typen--handles)
     *   [Initialisierung & Ressourcenverwaltung](#initialisierung--ressourcenverwaltung)
