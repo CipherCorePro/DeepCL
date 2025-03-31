@@ -118,14 +118,17 @@ graph TD
         P_Model -- "Erzeugt Logits -> (implizit Softmax)" --> P_Shape["Loss Shaping (GPU Kernel)<br/>Benötigt: Orig. Loss, Probs, Targets, Krit. Paare"]
         P_Loss -- "ctypes-Aufruf" --> C_API["C API Funktionen (.dll/.so)"]
         P_Loss -- "-> Original Loss Per Sample" --> P_Shape
-        P_Loss -- "-> dLogits (Gradient)" --> P_Model # Gradient geht zurück zum Model für Backward Pass
+        %% Gradient (dLogits) geht zurück zum Model für Backward Pass
+        P_Loss -- "-> dLogits (Gradient)" --> P_Model
         P_Layers -- "Halten" --> P_GPU_T["GPUTensor-Objekte (Params, Akts, States, Krit. Paare)"]
         P_GPU_T -- "ctypes-Aufruf" --> C_API
         P_Layers -- "ctypes-Aufruf" --> C_API
         P_Shape -- "ctypes-Aufruf" --> C_API
-        P_Shape -- "-> Shaped Loss Per Sample" --> P_TrainLoop # Für Logging/Reporting
+        %% Shaped Loss wird für Logging/Reporting verwendet
+        P_Shape -- "-> Shaped Loss Per Sample" --> P_TrainLoop
         P_TrainLoop -- "Nutzt orig./shaped Loss" --> P_Monitor["Monitoring/Logging"]
-        P_TrainLoop -- "Nutzt dLogits für Update" --> P_Model # Trigger Update Steps
+        %% Trainingsloop triggert Updates basierend auf dLogits
+        P_TrainLoop -- "Nutzt dLogits für Update" --> P_Model
     end
 
     subgraph "C/OpenCL Backend: GPU Execution & Low-Level Management"
