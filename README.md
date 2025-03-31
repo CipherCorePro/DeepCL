@@ -438,12 +438,6 @@ Das Framework ist bewusst **modular und erweiterbar** aufgebaut. Zukünftige For
 Willkommen beim CipherCore FAQ! Hier finden Sie Antworten auf häufig gestellte Fragen zu unserem Framework für hybride neuronale Netzwerke.  Wir helfen Ihnen gerne weiter, damit Sie unsere Technologie optimal nutzen können.
 
 ---
-
-# CipherCore FAQ – Häufig gestellte Fragen
-
-Willkommen beim CipherCore FAQ! Hier finden Sie Antworten auf häufig gestellte Fragen zu unserem Framework für hybride neuronale Netzwerke.  Wir helfen Ihnen gerne weiter, damit Sie unsere Technologie optimal nutzen können.
-
----
 **🧠 Allgemein & Architektur**
 ---
 
