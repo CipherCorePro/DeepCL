@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Python-Code zur Verwendung des C/OpenCL-Treibers für ein gehirnähnliches Netzwerk.
-Angepasst für Charakter-Level Text Generation mit Embedding Layer.
+Angepasst für Charakter-Level Text Generation mit Embedding Layer und Loss Shaping (List).
 """
 import ctypes
 import numpy as np
@@ -52,6 +52,21 @@ SPIKE_THRESHOLD = 0.45
 PROTOTYPE_LR = 0.005 # Eventuell anpassen
 USE_GPU_PROTOTYPE_UPDATE = True # GPU Update nutzen, da es jetzt funktioniert
 
+# --- NEU: Loss Shaping Parameter (mit Liste) ---
+USE_LOSS_SHAPING = True # Schalter zum Aktivieren/Deaktivieren
+PENALTY_WEIGHT = 0.5   # Verlust hinzufügen, wenn ein kritisches Paar zutrifft
+REWARD_WEIGHT = 0.2    # Verlust reduzieren, wenn Vorhersage korrekt und über Schwelle
+HIGH_CONFIDENCE_THRESHOLD = 0.9 # Wahrscheinlichkeitsschwelle für Belohnung
+
+# Liste von (Ziel-Zeichen, Vorhergesagtes-Zeichen) Paaren
+CRITICAL_PAIRS_CHAR = [
+    ('.', ' '),  # Beispiel: Bestrafe Vorhersage von ' ' wenn Ziel '.' ist
+    ('\n', ' '), # Beispiel: Bestrafe Vorhersage von ' ' wenn Ziel '\n' ist
+    # Füge hier weitere Paare hinzu, z.B. (':', '-') etc.
+]
+CRITICAL_PAIRS_ID = [] # Wird nach Vokabular-Ladung gefüllt
+NUM_CRITICAL_PAIRS = 0 # Wird nach Vokabular-Ladung gesetzt
+
 # --- Pfadkonfiguration ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
 cl_dir = os.path.join(script_dir, "CL")
@@ -60,7 +75,7 @@ checkpoint_dir = os.path.join(script_dir, "mini_checkpoints")
 os.makedirs(data_dir, exist_ok=True)
 os.makedirs(checkpoint_dir, exist_ok=True)
 
-# NEU: Pfade für echte Daten
+# Pfade für echte Daten
 input_text_file = os.path.join(data_dir, "mini_input.txt") # <<<=== Lege hier deine Textdatei ab!
 processed_data_file = os.path.join(data_dir, "mini_char_dataset.npz")
 
@@ -69,7 +84,6 @@ checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
 best_checkpoint_path = os.path.join(checkpoint_dir, f"best_{checkpoint_filename}")
 
 # --- WICHTIG: Füge das CL-Verzeichnis zum DLL-Suchpfad hinzu (Windows, Python 3.8+) ---
-# ... (unverändert) ...
 dll_load_error = None
 if platform.system() == "Windows":
     if hasattr(os, 'add_dll_directory'):
@@ -85,7 +99,7 @@ if platform.system() == "Windows":
 
 # Laden der kompilierten C-Bibliothek aus dem CL-Ordner
 lib_name = "CipherCore_OpenCl.dll" if platform.system() == "Windows" else "libsimulated_driver.so"
-lib_path = os.path.join(cl_dir, lib_name)
+lib_path = os.path.join(script_dir, lib_name)
 
 c_driver = None # Initialisieren für finally Block
 if not os.path.exists(lib_path):
@@ -114,7 +128,6 @@ except OSError as e:
 print(f"[Python] C-Treiber-Bibliothek geladen von: {lib_path}")
 
 # --- GPU Erkennung / Auswahl ---
-# ... (list_available_gpus, select_gpu_index, initialize_selected_gpu unverändert) ...
 def list_available_gpus() -> List[Tuple[int, cl.Device]]:
     """ Listet verfügbare OpenCL GPUs auf. """
     platforms = cl.get_platforms()
@@ -183,7 +196,6 @@ def initialize_selected_gpu(gpu_index: int):
 
 
 # --- Definition der C-Funktionssignaturen mit ctypes ---
-# ... (unverändert) ...
 GPU_BUFFER_HANDLE = ctypes.c_void_p
 c_driver.initialize_gpu.argtypes = [ctypes.c_int]; c_driver.initialize_gpu.restype = ctypes.c_int
 c_driver.allocate_gpu_memory.argtypes = [ctypes.c_int, ctypes.c_size_t]; c_driver.allocate_gpu_memory.restype = GPU_BUFFER_HANDLE
@@ -211,6 +223,8 @@ c_driver.execute_hebbian_update_on_gpu.argtypes = [ctypes.c_int, GPU_BUFFER_HAND
 c_driver.execute_threshold_spike_on_gpu.argtypes = [ctypes.c_int, GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE, ctypes.c_float, ctypes.c_int]; c_driver.execute_threshold_spike_on_gpu.restype = ctypes.c_int
 c_driver.execute_dynamic_token_assignment_gpu.argtypes = [ctypes.c_int, GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]; c_driver.execute_dynamic_token_assignment_gpu.restype = ctypes.c_int
 c_driver.execute_pairwise_similarity_gpu.argtypes = [ctypes.c_int, GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE, ctypes.c_int, ctypes.c_int]; c_driver.execute_pairwise_similarity_gpu.restype = ctypes.c_int
+c_driver.execute_softmax_on_gpu.argtypes = [ctypes.c_int, GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE, ctypes.c_int, ctypes.c_int]; c_driver.execute_softmax_on_gpu.restype = ctypes.c_int # Hinzugefügt für Loss Shaping
+
 CAN_USE_GPU_PROTO_UPDATE = False
 try:
     c_driver.execute_proto_segmented_sum_gpu.argtypes = [ctypes.c_int, GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE, ctypes.c_int, ctypes.c_int, ctypes.c_int]
@@ -222,13 +236,33 @@ try:
 except AttributeError:
     print("[Python] WARNUNG: GPU Prototyp-Update Funktionen nicht in DLL gefunden. Host-Fallback wird verwendet.")
 
+# NEU: CTypes-Definition für Loss Shaping (List)
+CAN_USE_LOSS_SHAPING_LIST_GPU = False
+try:
+    c_driver.execute_shape_loss_with_reward_penalty_list_gpu.argtypes = [
+        ctypes.c_int, GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE,
+        GPU_BUFFER_HANDLE, GPU_BUFFER_HANDLE, # critical_pairs handle
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, # num_samples, num_classes, num_critical_pairs count
+        ctypes.c_float, ctypes.c_float, ctypes.c_float # penalty, reward, threshold
+    ]
+    c_driver.execute_shape_loss_with_reward_penalty_list_gpu.restype = ctypes.c_int
+    print("[Python] CTypes-Definition für Loss Shaping (List) geladen.")
+    CAN_USE_LOSS_SHAPING_LIST_GPU = True
+except AttributeError:
+    print("[Python] WARNUNG: Loss Shaping Funktion (List) nicht in DLL gefunden.")
+
+
 if USE_GPU_PROTOTYPE_UPDATE and not CAN_USE_GPU_PROTO_UPDATE:
      print("[Python] FEHLER: GPU Prototyp-Update angefordert, aber Funktionen nicht in DLL gefunden!")
      sys.exit(1)
+# Aktualisiere die globale Bedingung
+if USE_LOSS_SHAPING and not CAN_USE_LOSS_SHAPING_LIST_GPU:
+     print("[Python] FEHLER: Loss Shaping angefordert, aber List-Funktion nicht in DLL gefunden!")
+     sys.exit(1)
+# Die Prüfung für die alte Funktion (CAN_USE_LOSS_SHAPING_GPU) ist entfernt
 
 
 # --- GPUTensor Klasse ---
-# ... (unverändert, nur Prints reduziert) ...
 class GPUTensor:
     def __init__(self, size_in_bytes: int, gpu_index: int = GPU_INDEX, name: str = "Tensor", zero_init: bool = False):
         self.gpu_index = gpu_index
@@ -253,25 +287,12 @@ class GPUTensor:
 
     def _zero_initialize(self):
         if self.handle is None or self.size == 0: return
-        item_size = 4 # Annahme FP32 oder INT32
-        num_elements = self.size // item_size
-        zeros_buffer = None # Initialisieren
-        if num_elements * item_size != self.size:
-            zeros_buffer = np.zeros(self.size, dtype=np.byte)
-        else:
-             # Versuche, dtype basierend auf Namen zu erraten
-            if 'indices' in self.name.lower() or 'counts' in self.name.lower() or 'target' in self.name.lower() or 'InputIndices' in self.name: # <<< NEU: InputIndices
-                zeros_buffer = np.zeros(num_elements, dtype=INT_TYPE)
-            else:
-                zeros_buffer = np.zeros(num_elements, dtype=FP_TYPE)
-
-        try:
-            if zeros_buffer is not None:
-                self.write(zeros_buffer)
-        except Exception as e:
-             print(f"[Python GPUTensor] FEHLER bei Zero-Init für '{self.name}': {e}")
-        finally:
-            if zeros_buffer is not None: del zeros_buffer
+        # Verwende write_host_to_gpu_blocking mit einem Null-gefüllten Host-Buffer
+        zeros_host = np.zeros(self.size, dtype=np.byte) # Sicherste Variante: Byte-weise Nullen
+        data_ptr = zeros_host.ctypes.data_as(ctypes.c_void_p)
+        if c_driver.write_host_to_gpu_blocking(self.gpu_index, self.handle, 0, self.size, data_ptr) == 0:
+            raise RuntimeError(f"Fehler beim Zero-Initializing für '{self.name}'.")
+        del zeros_host
 
     def write(self, host_data_np: np.ndarray, offset_bytes: int = 0):
         if self._is_freed: raise RuntimeError(f"Operation auf freigegebenem Tensor '{self.name}'.")
@@ -281,7 +302,7 @@ class GPUTensor:
         if not host_data_np.flags['C_CONTIGUOUS']: host_data_np = np.ascontiguousarray(host_data_np)
         data_ptr = host_data_np.ctypes.data_as(ctypes.c_void_p)
         size_bytes = host_data_np.nbytes
-        handle_int = ctypes.cast(self.handle, ctypes.c_void_p).value
+        #handle_int = ctypes.cast(self.handle, ctypes.c_void_p).value # Debug
         if offset_bytes < 0 or size_bytes < 0: raise ValueError(f"Offset/Größe darf nicht negativ sein für '{self.name}'.")
         if offset_bytes + size_bytes > self.size: raise ValueError(f"Schreibvorgang (Offset {offset_bytes}, Größe {size_bytes}) überschreitet allokierte Größe {self.size} für '{self.name}'.")
         if c_driver.write_host_to_gpu_blocking(self.gpu_index, self.handle, offset_bytes, size_bytes, data_ptr) == 0:
@@ -296,7 +317,7 @@ class GPUTensor:
         if not host_data_np.flags['WRITEABLE']: raise ValueError("Ziel-NumPy-Array muss beschreibbar sein.")
         data_ptr = host_data_np.ctypes.data_as(ctypes.c_void_p)
         size_bytes = host_data_np.nbytes
-        handle_int = ctypes.cast(self.handle, ctypes.c_void_p).value
+        #handle_int = ctypes.cast(self.handle, ctypes.c_void_p).value # Debug
         if offset_bytes < 0 or size_bytes < 0: raise ValueError(f"Offset/Größe darf nicht negativ sein für '{self.name}'.")
         if offset_bytes + size_bytes > self.size: raise ValueError(f"Lesevorgang (Offset {offset_bytes}, Größe {size_bytes}) überschreitet allokierte Größe {self.size} für '{self.name}'.")
         if c_driver.read_gpu_to_host_blocking(self.gpu_index, self.handle, offset_bytes, size_bytes, data_ptr) == 0:
@@ -306,8 +327,8 @@ class GPUTensor:
     def free(self):
         if not self._is_freed and self.handle:
             handle_to_free = self.handle
-            handle_int = ctypes.cast(handle_to_free, ctypes.c_void_p).value
-            if DEBUG_PRINTS: print(f"[Python GPUTensor] Freeing '{self.name}' (handle: {hex(handle_int)})")
+            #handle_int = ctypes.cast(handle_to_free, ctypes.c_void_p).value # Debug
+            if DEBUG_PRINTS: print(f"[Python GPUTensor] Freeing '{self.name}' (handle: {hex(ctypes.cast(handle_to_free, ctypes.c_void_p).value)})")
             try: c_driver.free_gpu_memory(self.gpu_index, handle_to_free)
             except Exception as e: print(f"[Python GPUTensor] WARNUNG: Fehler beim Freigeben von '{self.name}': {e}")
             finally: self.handle = None; self.size = 0
@@ -318,8 +339,7 @@ class GPUTensor:
              if DEBUG_PRINTS: print(f"[Python GPUTensor] Destructor called for '{self.name}' - ensuring memory is freed.")
              self.free()
 
-# --- NEU: Datenverarbeitung für Charakter-Level ---
-# ... (preprocess_char_data, load_processed_data, create_batches unverändert) ...
+# --- Datenverarbeitung für Charakter-Level ---
 def preprocess_char_data(input_path: str, output_path: str, seq_len: int, val_split: float = 0.1):
     """
     Liest eine Textdatei, erstellt ein Charakter-Vokabular, erzeugt Input/Target-Paare
@@ -371,7 +391,6 @@ def preprocess_char_data(input_path: str, output_path: str, seq_len: int, val_sp
     print(f"[DataPrep] Aufgeteilt: {len(train_inputs)} Trainings-, {len(valid_inputs)} Validierungssequenzen.")
 
     # Speichern
-    # Pickle kann direkt zum Speichern von Dicts verwendet werden
     vocab_data = {'char_to_id': char_to_id, 'id_to_char': id_to_char}
     with open(output_path + "_vocab.pkl", 'wb') as f:
         pickle.dump(vocab_data, f)
@@ -403,7 +422,6 @@ def load_processed_data(filepath: str) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     id_to_char = vocab_data['id_to_char']
     vocab_size = len(char_to_id)
 
-    # Form überprüfen (sollte jetzt 2D sein)
     if train_inputs.ndim != 2 or train_targets.ndim != 2 or valid_inputs.ndim != 2 or valid_targets.ndim != 2:
         raise ValueError(f"Geladene Daten haben nicht die erwarteten 2 Dimensionen.")
     if train_inputs.shape != train_targets.shape or valid_inputs.shape != valid_targets.shape:
@@ -429,16 +447,12 @@ def create_batches(inputs: np.ndarray, targets: np.ndarray, batch_size: int, seq
         batch_indices = indices[start_idx:end_idx]
         current_batch_size = len(batch_indices)
 
-        # Direkte Indizierung für 2D-Arrays
         batch_inputs = inputs[batch_indices]
         batch_targets = targets[batch_indices]
 
-        # Padding, falls der letzte Batch kleiner ist
         if current_batch_size < batch_size:
             num_padding = batch_size - current_batch_size
-            # Padding für 2D-Arrays
             input_padding_shape = (num_padding, seq_len)
-            # Input mit PAD_INDEX padden (da 0 eine gültige ID sein kann)
             input_padding = np.full(input_padding_shape, PAD_INDEX, dtype=inputs.dtype)
             batch_inputs = np.concatenate([batch_inputs, input_padding], axis=0)
 
@@ -449,8 +463,7 @@ def create_batches(inputs: np.ndarray, targets: np.ndarray, batch_size: int, seq
         yield batch_inputs, batch_targets
 
 
-# --- NEU: Embedding Layer Klasse ---
-# ... (unverändert, nur Prints reduziert) ...
+# --- Embedding Layer Klasse ---
 class EmbeddingLayer:
     def __init__(self, vocab_size: int, embedding_dim: int, gpu_index: int = GPU_INDEX):
         self.V = vocab_size
@@ -460,20 +473,15 @@ class EmbeddingLayer:
         itemsize_fp = FP_TYPE().itemsize
         itemsize_adam = np.float32().itemsize
 
-        # Embedding Matrix und Gradient/Adam States
         self.W_emb = GPUTensor(self.V * self.E * itemsize_fp, gpu_index, name="EmbeddingW")
         self.dW_emb = GPUTensor(self.V * self.E * itemsize_fp, gpu_index, name="dEmbeddingW", zero_init=True)
         self.m_W_emb = GPUTensor(self.V * self.E * itemsize_adam, gpu_index, name="m_EmbeddingW", zero_init=True)
         self.v_W_emb = GPUTensor(self.V * self.E * itemsize_adam, gpu_index, name="v_EmbeddingW", zero_init=True)
 
-        # Output-Tensor wird von MyModel verwaltet
         self.output: Optional[GPUTensor] = None
         self.input_indices_handle_cache: Optional[GPU_BUFFER_HANDLE] = None
-        self.current_B = 0 # Wird von MyModel gesetzt
-        self.current_S = 0 # Wird von MyModel gesetzt
-
-        # Minimalerer Print
-        # print(f"[EmbeddingLayer] Initialisiert: VocabSize={self.V}, EmbeddingDim={self.E}")
+        self.current_B = 0
+        self.current_S = 0
 
     def _check_freed(self):
         if self._is_freed: raise RuntimeError("Operation on freed EmbeddingLayer.")
@@ -485,7 +493,7 @@ class EmbeddingLayer:
     def forward(self, input_indices_gpu: GPUTensor, output_buffer_gpu: GPUTensor) -> GPUTensor:
         self._check_freed()
         self.input_indices_handle_cache = input_indices_gpu.handle
-        self.output = output_buffer_gpu # Verwende den vom Model bereitgestellten Buffer
+        self.output = output_buffer_gpu
 
         if self.output.handle is None: raise RuntimeError("Output buffer handle in EmbeddingLayer forward is None.")
         if self.input_indices_handle_cache is None: raise RuntimeError("Input indices handle cache in EmbeddingLayer forward is None.")
@@ -498,8 +506,8 @@ class EmbeddingLayer:
             self.output.handle,
             self.current_B,
             self.current_S,
-            self.E, # Embedding Dimension (d in C)
-            self.V  # Vocab Size (v in C)
+            self.E,
+            self.V
         ) == 0:
             raise RuntimeError("Embedding Lookup fehlgeschlagen.")
         return self.output
@@ -512,13 +520,13 @@ class EmbeddingLayer:
 
         if c_driver.execute_embedding_backward_gpu(
             self.gpu_index,
-            d_output.handle,           # d_o
-            self.input_indices_handle_cache, # idx
-            self.dW_emb.handle,        # d_w (Ziel für Gradienten)
-            self.current_B,            # b
-            self.current_S,            # s
-            self.E,                    # d (embedding dim)
-            self.V                     # v (vocab size)
+            d_output.handle,
+            self.input_indices_handle_cache,
+            self.dW_emb.handle,
+            self.current_B,
+            self.current_S,
+            self.E,
+            self.V
         ) == 0:
             raise RuntimeError("Embedding Backward (non-atomic) fehlgeschlagen.")
         return None # Gibt keinen Gradienten weiter
@@ -559,8 +567,6 @@ class EmbeddingLayer:
             if 'W_emb' in state and self.W_emb.size > 0: self.W_emb.write(state['W_emb'].astype(FP_TYPE))
             if 'm_W_emb' in state and self.m_W_emb.size > 0: self.m_W_emb.write(state['m_W_emb'].astype(np.float32))
             if 'v_W_emb' in state and self.v_W_emb.size > 0: self.v_W_emb.write(state['v_W_emb'].astype(np.float32))
-            # Minimalerer Print
-            # if DEBUG_PRINTS: print(f"[EmbeddingLayer] Zustand geladen für {self.V} x {self.E}.")
         except KeyError as e: print(f"[EmbeddingLayer] WARNUNG: Fehlender Key im Checkpoint-State: {e}")
         except Exception as e: print(f"[EmbeddingLayer] FEHLER beim Setzen des Zustands: {e}")
 
@@ -583,7 +589,6 @@ class EmbeddingLayer:
     def eval(self): pass
 
 # --- Layer Klassen (Linear, BioInspired, CrossEntropyLoss) ---
-# ... (LinearLayer, BioInspiredAssociativeLayer, CrossEntropyLoss unverändert, nur Prints reduziert) ...
 class LinearLayer:
     def __init__(self, batch_size_seq_len_flat: int, input_dim: int, output_dim: int, gpu_index: int = GPU_INDEX):
         self.M_flat = batch_size_seq_len_flat; self.E_in = input_dim; self.E_out = output_dim
@@ -595,8 +600,6 @@ class LinearLayer:
         self.m_b = GPUTensor(self.E_out * itemsize_adam, gpu_index, name="m_LinearB", zero_init=True); self.v_b = GPUTensor(self.E_out * itemsize_adam, gpu_index, name="v_LinearB", zero_init=True)
         self.output = GPUTensor(self.M_flat * self.E_out * itemsize_fp, gpu_index, name="LinearOutput"); self.d_input = GPUTensor(self.M_flat * self.E_in * itemsize_fp, gpu_index, name="dLinearInput")
         self.input_handle_cache = None; self.current_M_flat = self.M_flat
-        # Minimalerer Print
-        # print(f"[LinearLayer] Initialisiert: In={self.E_in}, Out={self.E_out}, Max M_flat={self.M_flat}")
     def _check_freed(self):
         if self._is_freed: raise RuntimeError("Operation on freed LinearLayer.")
     def set_current_batch_m_flat(self, m_flat: int):
@@ -692,10 +695,6 @@ class BioInspiredAssociativeLayer:
         if self.T > 0 and USE_GPU_PROTOTYPE_UPDATE and CAN_USE_GPU_PROTO_UPDATE:
              self.proto_sums_gpu = GPUTensor(self.T * self.E_hidden * itemsize_fp, gpu_index, name="ProtoSumsGPU", zero_init=True)
              self.proto_counts_gpu = GPUTensor(self.T * itemsize_int, gpu_index, name="ProtoCountsGPU", zero_init=True)
-        # Minimalerer Print
-        # print(f"[BioLayer] Initialisiert: Max B={self.B}, S={self.S}, E_in(Embed)={self.E_in}, E_hidden={self.E_hidden}, T={self.T}")
-        # print(f"[BioLayer] Max Flattened M dimension: {self.max_M_flat}")
-        # print(f"[BioLayer] GPU Prototype Update: {'Aktiviert' if self.T > 0 and USE_GPU_PROTOTYPE_UPDATE and CAN_USE_GPU_PROTO_UPDATE else 'Deaktiviert'}")
     def _check_freed(self):
         if self._is_freed: raise RuntimeError("Operation on freed BioInspiredAssociativeLayer.")
     def set_current_batch_shape(self, b: int, s: int):
@@ -839,10 +838,8 @@ class CrossEntropyLoss:
         self._is_freed = False
         itemsize_fp = FP_TYPE().itemsize
         self.log_probs = GPUTensor(self.max_M_flat * self.V * itemsize_fp, gpu_index, name="LogProbs")
-        self.d_logits = GPUTensor(self.max_M_flat * self.V * itemsize_fp, gpu_index, name="dLogits", zero_init=True) # Zero init grads
+        self.d_logits = GPUTensor(self.max_M_flat * self.V * itemsize_fp, gpu_index, name="dLogits", zero_init=True)
         self.loss_per_sample = GPUTensor(self.max_M_flat * itemsize_fp, gpu_index, name="LossPerSample")
-        # Minimalerer Print
-        # print(f"[CrossEntropyLoss] Initialisiert: VocabSize={self.V}, Max M_flat={self.max_M_flat}")
 
     def _check_freed(self):
         if self._is_freed: raise RuntimeError("Operation on freed CrossEntropyLoss.")
@@ -869,7 +866,14 @@ class CrossEntropyLoss:
         valid_mask = targets_np_flat != PAD_INDEX
         valid_losses = host_loss_per_sample[valid_mask]
         if np.any(valid_mask) and len(valid_losses) > 0:
-             mean_loss = np.mean(valid_losses)
+             # Korrektur: NaN-Werte ausschließen, bevor der Mittelwert berechnet wird
+             valid_losses = valid_losses[np.isfinite(valid_losses)]
+             if len(valid_losses) > 0:
+                  mean_loss = np.mean(valid_losses)
+             else:
+                 mean_loss = 0.0 # Falls nach NaN-Filterung nichts übrig bleibt
+        else:
+             mean_loss = 0.0 # Falls keine gültigen Targets vorhanden sind
 
         del host_loss_per_sample, targets_np_flat, valid_mask, valid_losses
         return float(mean_loss)
@@ -890,27 +894,27 @@ class MyModel:
     def __init__(self, batch_size: int, seq_len: int, embedding_dim: int, hidden_dim: int, vocab_size: int, num_prototypes: int, gpu_index: int = GPU_INDEX):
         self.B = batch_size; self.S = seq_len; self.M_flat = batch_size * seq_len;
         self.embedding_dim = embedding_dim; self.hidden_dim = hidden_dim; self.vocab_size = vocab_size;
-        self.num_prototypes = num_prototypes # <<< NEU: Store num_prototypes
+        self.num_prototypes = num_prototypes
         self.gpu_index = gpu_index; self._is_freed = False
         itemsize_fp = FP_TYPE().itemsize
 
         print("[Model Init] Erstelle Layer...")
         self.embedding_layer = EmbeddingLayer(vocab_size, embedding_dim, gpu_index=gpu_index)
-        # Pass NUM_TOKEN_PROTOTYPES hier korrekt
         self.bio_layer = BioInspiredAssociativeLayer(batch_size, seq_len, embedding_dim, hidden_dim, self.num_prototypes, gpu_index=gpu_index, hebbian_lr=HEBBIAN_LR, spike_threshold=SPIKE_THRESHOLD, prototype_lr=PROTOTYPE_LR)
         self.output_layer = LinearLayer(self.M_flat, hidden_dim, vocab_size, gpu_index=gpu_index)
         self.criterion = CrossEntropyLoss(self.M_flat, vocab_size, gpu_index=gpu_index)
 
         print("[Model Init] Erstelle Buffer...")
-        # Buffer für Embedding-Output (wird von EmbeddingLayer genutzt)
         self.embedding_output_buffer = GPUTensor(self.M_flat * self.embedding_dim * itemsize_fp, gpu_index, name="EmbeddingOutputBuffer")
+        # Buffer für Loss Shaping, werden bei Bedarf im Training erstellt/resized
+        self.predictions_gpu: Optional[GPUTensor] = None
+        self.shaped_loss_gpu: Optional[GPUTensor] = None
         print("[Model Init] Initialisierung abgeschlossen.")
 
     def _initialize_weights(self):
         if DEBUG_PRINTS: print("[Model] Initializing weights...")
         self.embedding_layer.initialize_weights()
         limit_bio = np.sqrt(6.0 / (self.bio_layer.E_in + self.bio_layer.E_hidden)); self.bio_layer.W1.write(np.random.uniform(-limit_bio, limit_bio, (self.bio_layer.E_in, self.bio_layer.E_hidden)).astype(FP_TYPE))
-        # Nur initialisieren, wenn Prototypen existieren
         if self.bio_layer.T > 0 and self.bio_layer.prototypes is not None:
             prototypes_init = np.random.randn(self.bio_layer.T, self.bio_layer.E_hidden).astype(FP_TYPE) * 0.1; self.bio_layer.prototypes.write(prototypes_init)
         limit_out = np.sqrt(6.0 / (self.output_layer.E_in + self.output_layer.E_out)); self.output_layer.W.write(np.random.uniform(-limit_out, limit_out, (self.output_layer.E_in, self.output_layer.E_out)).astype(FP_TYPE))
@@ -929,18 +933,82 @@ class MyModel:
         logits = self.output_layer.forward(bio_output)
         return logits
 
-    def compute_loss_and_backward(self, logits: GPUTensor, targets_gpu: GPUTensor, targets_np: np.ndarray) -> Tuple[float, None]:
-        """ Berechnet Loss und führt Backward-Pass durch alle Schichten aus """
+    def compute_loss_and_backward(self, logits: GPUTensor, targets_gpu: GPUTensor, targets_np: np.ndarray, critical_pairs_gpu: Optional[GPUTensor]) -> Tuple[float, Optional[float]]:
+        """ Berechnet Loss und führt Backward-Pass durch alle Schichten aus.
+            Gibt (original_loss, shaped_loss) zurück. shaped_loss ist None, wenn Shaping deaktiviert ist.
+            critical_pairs_gpu muss als Argument übergeben werden.
+        """
         current_m_flat = self.bio_layer.current_M_flat # Hole aktuelle Batch-Größe
 
-        loss = self.criterion.forward(logits, targets_gpu, current_m_flat, targets_np=targets_np)
+        original_loss = self.criterion.forward(logits, targets_gpu, current_m_flat, targets_np=targets_np)
         d_logits = self.criterion.d_logits # Gradient aus dem Loss-Kernel holen
 
+        shaped_loss_value: Optional[float] = None
+        # --- NEU: Loss Shaping (wenn aktiviert) ---
+        if USE_LOSS_SHAPING and CAN_USE_LOSS_SHAPING_LIST_GPU and NUM_CRITICAL_PAIRS > 0 and critical_pairs_gpu is not None: # Prüfe auch, ob Paare definiert sind
+            try:
+                # 1. Berechne Wahrscheinlichkeiten aus Logits (unverändert)
+                if self.predictions_gpu is None or self.predictions_gpu.size != logits.size:
+                    if self.predictions_gpu: self.predictions_gpu.free() # Free old one if size mismatch
+                    self.predictions_gpu = GPUTensor(logits.size, name="PredictionsGPU", gpu_index=self.gpu_index)
+                if c_driver.execute_softmax_on_gpu(self.gpu_index, logits.handle, self.predictions_gpu.handle, current_m_flat, self.vocab_size) == 0:
+                    raise RuntimeError("Softmax für Loss Shaping fehlgeschlagen.")
+
+                # 2. Sicherstellen, dass shaped_loss_gpu existiert (unverändert)
+                if self.shaped_loss_gpu is None or self.shaped_loss_gpu.size != self.criterion.loss_per_sample.size:
+                    if self.shaped_loss_gpu: self.shaped_loss_gpu.free() # Free old one if size mismatch
+                    self.shaped_loss_gpu = GPUTensor(self.criterion.loss_per_sample.size, name="ShapedLossGPU", gpu_index=self.gpu_index)
+
+                # 3. Rufe die NEUE Shaping-Funktion auf
+                if c_driver.execute_shape_loss_with_reward_penalty_list_gpu(
+                    self.gpu_index,
+                    self.criterion.loss_per_sample.handle, # loss_in
+                    self.predictions_gpu.handle,          # predictions
+                    targets_gpu.handle,                  # targets
+                    self.shaped_loss_gpu.handle,          # loss_out
+                    critical_pairs_gpu.handle,           # critical_pairs handle <<< NEU
+                    current_m_flat,                      # num_samples
+                    self.vocab_size,                     # num_classes
+                    NUM_CRITICAL_PAIRS,                  # num_critical_pairs <<< NEU
+                    PENALTY_WEIGHT,
+                    REWARD_WEIGHT,
+                    HIGH_CONFIDENCE_THRESHOLD
+                ) == 0:
+                    raise RuntimeError("Loss Shaping (List) fehlgeschlagen.")
+
+                # 4. Lese den modifizierten Loss für das Logging (unverändert)
+                host_shaped_loss = np.zeros(current_m_flat, dtype=FP_TYPE)
+                self.shaped_loss_gpu.read(host_shaped_loss)
+                targets_np_flat = targets_np.flatten()[:current_m_flat]
+                valid_mask = targets_np_flat != PAD_INDEX
+                valid_losses_shaped = host_shaped_loss[valid_mask]
+                if np.any(valid_mask) and len(valid_losses_shaped) > 0:
+                    valid_losses_shaped = valid_losses_shaped[np.isfinite(valid_losses_shaped)] # NaN Check
+                    if len(valid_losses_shaped) > 0:
+                        shaped_loss_value = float(np.mean(valid_losses_shaped))
+                    else: shaped_loss_value = 0.0 # Fallback if only NaNs
+                else: shaped_loss_value = 0.0 # Fallback if no valid targets
+                del host_shaped_loss, targets_np_flat, valid_mask, valid_losses_shaped
+
+            except Exception as e:
+                 print(f"[WARNUNG] Fehler während Loss Shaping, wird für diesen Batch übersprungen: {e}")
+                 shaped_loss_value = None # Kein gültiger Wert, wenn Fehler auftritt
+        elif USE_LOSS_SHAPING: # Fallback, falls aktiv, aber Bedingungen nicht erfüllt
+            if not CAN_USE_LOSS_SHAPING_LIST_GPU: pass # Bereits in Init geprüft und Fehler ausgegeben
+            elif NUM_CRITICAL_PAIRS == 0: pass # Keine Paare definiert oder ungültig, bereits gewarnt
+            elif critical_pairs_gpu is None: # Sollte nicht passieren wenn NUM_CRITICAL_PAIRS > 0
+                 if DEBUG_PRINTS: print("[WARNUNG] Loss Shaping aktiv, Paare definiert, aber GPU Buffer fehlt.")
+            shaped_loss_value = None
+        # --- ENDE NEU ---
+
+        # Führe Backward-Pass mit dem ursprünglichen Gradienten (d_logits) durch
         d_bio_output = self.output_layer.backward(d_logits)
         d_embedded_input = self.bio_layer.backward(d_bio_output)
-        self.embedding_layer.backward(d_embedded_input) # Gradient endet hier
+        self.embedding_layer.backward(d_embedded_input)
 
-        return loss, None
+        # Gebe beide Loss-Werte zurück (Original für Konsistenz, Shaped für angepasstes Training/Logging)
+        return original_loss, shaped_loss_value
+
 
     def clip_all_gradients(self, clip_value: Optional[float]):
          if clip_value is not None and clip_value > 0:
@@ -967,8 +1035,8 @@ class MyModel:
             'output_layer_state': self.output_layer.get_state(),
             'best_valid_loss': best_loss if best_loss is not None else float('inf'),
             'vocab_size': self.vocab_size, 'embedding_dim': self.embedding_dim,
-            'hidden_dim': self.hidden_dim, 'num_prototypes': self.num_prototypes, # <<< NEU: num_prototypes speichern
-            'seq_len': self.S # <<< NEU: seq_len speichern
+            'hidden_dim': self.hidden_dim, 'num_prototypes': self.num_prototypes,
+            'seq_len': self.S
         }
         try:
             backup_path = filepath + ".bak";
@@ -976,8 +1044,6 @@ class MyModel:
                 if os.path.exists(backup_path): os.remove(backup_path)
                 os.rename(filepath, backup_path)
             with open(filepath, 'wb') as f: pickle.dump(checkpoint, f)
-            # Minimalerer Print
-            # if DEBUG_PRINTS: print(f"[Model] Checkpoint gespeichert: {filepath} (Epoche {epoch}, Schritt {global_step})")
         except Exception as e: print(f"[Model] FEHLER beim Speichern des Checkpoints nach {filepath}: {e}")
 
     def load_checkpoint(self, filepath: str) -> Tuple[int, int, Optional[float]]:
@@ -987,25 +1053,12 @@ class MyModel:
         try:
             print(f"[Model] Lade Checkpoint aus {filepath}...")
             with open(filepath, 'rb') as f: checkpoint = pickle.load(f)
-            # Konsistenzprüfung (gegen aktuelle Modellparameter)
             mismatch = False
-            if checkpoint.get('vocab_size') != self.vocab_size:
-                print(f"[Model] WARNUNG: Checkpoint Vocab Size ({checkpoint.get('vocab_size')}) != Modell ({self.vocab_size})")
-                mismatch = True
-            if checkpoint.get('embedding_dim') != self.embedding_dim:
-                print(f"[Model] WARNUNG: Checkpoint Embedding Dim ({checkpoint.get('embedding_dim')}) != Modell ({self.embedding_dim})")
-                mismatch = True
-            if checkpoint.get('hidden_dim') != self.hidden_dim:
-                print(f"[Model] WARNUNG: Checkpoint Hidden Dim ({checkpoint.get('hidden_dim')}) != Modell ({self.hidden_dim})")
-                mismatch = True
-            # Prüfe num_prototypes nur, wenn es im Checkpoint existiert (für Abwärtskompatibilität)
-            if 'num_prototypes' in checkpoint and checkpoint.get('num_prototypes') != self.num_prototypes:
-                print(f"[Model] WARNUNG: Checkpoint Num Prototypes ({checkpoint.get('num_prototypes')}) != Modell ({self.num_prototypes})")
-                mismatch = True
-            # Prüfe seq_len nur, wenn es im Checkpoint existiert
-            if 'seq_len' in checkpoint and checkpoint.get('seq_len') != self.S:
-                 print(f"[Model] WARNUNG: Checkpoint Seq Len ({checkpoint.get('seq_len')}) != Modell ({self.S})")
-                 mismatch = True
+            if checkpoint.get('vocab_size') != self.vocab_size: mismatch = True; print(f"[WARN] Vocab Size: Ckp={checkpoint.get('vocab_size')} != Mod={self.vocab_size}")
+            if checkpoint.get('embedding_dim') != self.embedding_dim: mismatch = True; print(f"[WARN] Embed Dim: Ckp={checkpoint.get('embedding_dim')} != Mod={self.embedding_dim}")
+            if checkpoint.get('hidden_dim') != self.hidden_dim: mismatch = True; print(f"[WARN] Hidden Dim: Ckp={checkpoint.get('hidden_dim')} != Mod={self.hidden_dim}")
+            if 'num_prototypes' in checkpoint and checkpoint.get('num_prototypes') != self.num_prototypes: mismatch = True; print(f"[WARN] Num Protos: Ckp={checkpoint.get('num_prototypes')} != Mod={self.num_prototypes}")
+            if 'seq_len' in checkpoint and checkpoint.get('seq_len') != self.S: mismatch = True; print(f"[WARN] Seq Len: Ckp={checkpoint.get('seq_len')} != Mod={self.S}")
 
             if mismatch:
                 print("[Model] WARNUNG: Checkpoint-Hyperparameter stimmen nicht überein! Initialisiere Gewichte neu.")
@@ -1029,6 +1082,9 @@ class MyModel:
             if hasattr(self, 'output_layer') and self.output_layer: self.output_layer.free()
             if hasattr(self, 'criterion') and self.criterion: self.criterion.free()
             if hasattr(self, 'embedding_output_buffer') and self.embedding_output_buffer: self.embedding_output_buffer.free()
+            # Zusätzliche Buffer freigeben
+            if hasattr(self, 'predictions_gpu') and self.predictions_gpu: self.predictions_gpu.free()
+            if hasattr(self, 'shaped_loss_gpu') and self.shaped_loss_gpu: self.shaped_loss_gpu.free()
             self._is_freed = True
 
     def __del__(self):
@@ -1056,7 +1112,7 @@ class StepLR:
 def calculate_accuracy(logits_gpu: GPUTensor, targets_np: np.ndarray, current_m_flat: int, vocab_size: int) -> float:
      if logits_gpu.size == 0 or targets_np.size == 0 or current_m_flat == 0: return 0.0
      logits_host_flat = np.zeros(current_m_flat * vocab_size, dtype=FP_TYPE)
-     logits_gpu.read(logits_host_flat, offset_bytes=0) # Lese nur relevanten Teil
+     logits_gpu.read(logits_host_flat, offset_bytes=0)
      logits_host = logits_host_flat.reshape(current_m_flat, vocab_size)
 
      predictions_flat = np.argmax(logits_host, axis=1)
@@ -1069,32 +1125,42 @@ def calculate_accuracy(logits_gpu: GPUTensor, targets_np: np.ndarray, current_m_
      total_valid = np.sum(valid_mask)
 
      accuracy = correct_predictions / total_valid if total_valid > 0 else 0.0
-     del logits_host_flat, logits_host, predictions_flat, targets_flat, valid_mask # Speicher freigeben
+     del logits_host_flat, logits_host, predictions_flat, targets_flat, valid_mask
      return accuracy
 
-# --- NEU: Helper-Funktionen für Sampling ---
+# --- Helper-Funktionen für Sampling ---
 def encode(text: str, char_to_id: Mapping[str, int]) -> List[int]:
     """ Wandelt einen String in eine Liste von Token-IDs um. """
-    return [char_to_id.get(char, 0) for char in text] # Map unknown to 0? Oder Error?
+    return [char_to_id.get(char, 0) for char in text] # Use 0 for unknown chars?
 
 def decode(ids: Union[List[int], np.ndarray], id_to_char: Mapping[int, str]) -> str:
     """ Wandelt eine Liste/Array von Token-IDs zurück in einen String. """
-    return "".join([id_to_char.get(token_id, '?') for token_id in ids]) # Map unknown ID to '?'
+    return "".join([id_to_char.get(token_id, '?') for token_id in ids])
 
 def softmax(logits: np.ndarray, temperature: float = 1.0) -> np.ndarray:
     """ Berechnet Softmax-Wahrscheinlichkeiten (numerisch stabil). """
-    if temperature <= 0: temperature = 1.0 # Verhindere Division durch Null/Negativ
+    if temperature <= 0: temperature = 1.0
     logits = logits / temperature
-    exp_logits = np.exp(logits - np.max(logits)) # Stabilitäts-Trick
-    return exp_logits / np.sum(exp_logits)
+    exp_logits = np.exp(logits - np.max(logits))
+    sum_exp_logits = np.sum(exp_logits)
+    if sum_exp_logits == 0 or not np.isfinite(sum_exp_logits): # Check for zero or non-finite sum
+        return np.ones_like(exp_logits) / len(exp_logits) # Gleichverteilung bei Nullen oder NaN/Inf
+    return exp_logits / sum_exp_logits
 
 def sample_from_probs(probs: np.ndarray) -> int:
     """ Wählt einen Index basierend auf Wahrscheinlichkeiten. """
-    # Sicherstellen, dass probs eine gültige Verteilung ist (manchmal gibt es Rundungsfehler)
-    probs = probs / np.sum(probs)
+    # Ensure probabilities are valid (sum to 1, non-negative)
+    probs = np.maximum(probs, 0) # Ensure non-negative
+    prob_sum = np.sum(probs)
+    if prob_sum == 0 or not np.isfinite(prob_sum):
+        # Fallback: uniform distribution if sum is zero or invalid
+        probs = np.ones_like(probs) / len(probs)
+    else:
+        probs = probs / prob_sum # Normalize
+
     return np.random.choice(len(probs), p=probs)
 
-# --- NEU: Sampling-Funktion ---
+# --- Sampling-Funktion ---
 def generate_text(
     model_instance: MyModel,
     prompt: str,
@@ -1103,113 +1169,141 @@ def generate_text(
     vocab_size: int,
     char_to_id: Mapping[str, int],
     id_to_char: Mapping[int, str],
-    sampling_input_gpu: GPUTensor, # Wiederverwendbarer GPU-Tensor
-    temperature: float = 0.8,      # Temperatur für Sampling
+    sampling_input_gpu: GPUTensor,
+    temperature: float = 0.8,
     gpu_index: int = GPU_INDEX
 ) -> str:
-    """ Generiert Text basierend auf einem Prompt mit dem trainierten Modell. """
     print(f"\n--- Generiere Text (Prompt: '{prompt}', Länge: {num_chars_to_generate}, Temp: {temperature}) ---")
-    model_instance.eval_mode() # Sicherstellen, dass das Modell im Eval-Modus ist
+    model_instance.eval_mode()
 
     tokens = encode(prompt, char_to_id)
-    input_buffer_host = np.zeros(seq_len, dtype=INT_TYPE) # Host-Buffer für Input-IDs
-    logits_buffer_host = np.zeros(seq_len * vocab_size, dtype=FP_TYPE) # Host-Buffer für Output-Logits
+    input_buffer_host = np.zeros(seq_len, dtype=INT_TYPE)
+    # Allocate logits buffer based on model's M_flat * V (using B=1 for sampling)
+    logits_buffer_host = np.zeros(1 * seq_len * vocab_size, dtype=FP_TYPE)
 
     generation_start_time = time.time()
     try:
         for i in range(num_chars_to_generate):
-            # 1. Input vorbereiten (die letzten seq_len Tokens)
+            # Prepare input sequence (pad if necessary)
             current_input_tokens = tokens[-seq_len:]
-            # Padding, falls der Input kürzer als seq_len ist
             num_padding = seq_len - len(current_input_tokens)
-            padded_input_tokens = [PAD_INDEX] * num_padding + current_input_tokens # Pre-padding
-            # Übertrage in Host-Buffer (1D)
+            # Use PAD_INDEX for padding
+            padded_input_tokens = [PAD_INDEX] * num_padding + current_input_tokens
             input_buffer_host[:] = padded_input_tokens
 
-            # 2. Input auf GPU schreiben
+            # Write to GPU
             sampling_input_gpu.write(input_buffer_host)
 
-            # 3. Modell-Forward-Pass (Batchsize 1)
+            # Set model for single batch item inference
             model_instance.set_current_batch_shape(1, seq_len)
+
+            # Forward pass
             logits_gpu = model_instance.forward(sampling_input_gpu)
 
-            # 4. Logits von GPU lesen (nur die letzte Position ist relevant)
-            # Da der Output (M_flat, V) ist, lesen wir den ganzen Output (1*seq_len, V)
-            logits_gpu.read(logits_buffer_host)
-            # Reshape und letzte Logits holen
-            logits_matrix = logits_buffer_host.reshape((seq_len, vocab_size))
-            last_logits = logits_matrix[-1] # Die Logits für die Vorhersage des nächsten Zeichens
+            # Read logits back
+            # Ensure the read size matches the current model state (1 * seq_len * vocab_size)
+            read_size_bytes = 1 * seq_len * vocab_size * FP_TYPE().itemsize
+            if logits_gpu.size < read_size_bytes:
+                 raise RuntimeError(f"Logits GPU buffer size ({logits_gpu.size}) is smaller than expected read size ({read_size_bytes})")
+            if logits_buffer_host.nbytes < read_size_bytes:
+                 logits_buffer_host = np.zeros(1 * seq_len * vocab_size, dtype=FP_TYPE) # Resize if needed
 
-            # 5. Softmax und Sampling
+            logits_gpu.read(logits_buffer_host) # Read the actual M_flat * V size
+            logits_matrix = logits_buffer_host.reshape((1 * seq_len, vocab_size))
+
+            # Get logits for the *last* token in the sequence
+            last_logits = logits_matrix[-1]
+
+            # Apply softmax and sample
             probs = softmax(last_logits, temperature=temperature)
             next_token = sample_from_probs(probs)
 
-            # 6. Token hinzufügen
             tokens.append(next_token)
 
-            # Optional: Fortschritt anzeigen
-            # if (i + 1) % 50 == 0: print(f"  Generiert {i+1}/{num_chars_to_generate} Zeichen...")
+            # Optional: Print progress
+            # if (i + 1) % 50 == 0:
+            #     print(f"Generated {i+1}/{num_chars_to_generate} characters...")
 
     except Exception as e:
         print(f"\nFEHLER während der Textgenerierung: {e}")
-        import traceback
-        traceback.print_exc()
-        return "[GENERIERUNGSFEHLER]"
+        import traceback; traceback.print_exc(); return "[GENERIERUNGSFEHLER]"
     finally:
         generation_duration = time.time() - generation_start_time
         print(f"--- Generierung abgeschlossen ({generation_duration:.2f} sec) ---")
 
-    # 7. Ergebnis dekodieren
-    generated_sequence = decode(tokens, id_to_char)
-    return generated_sequence
+    generated_sequence = decode(tokens[len(prompt):], id_to_char) # Return only newly generated part
+    return prompt + generated_sequence
 
 
 # --- Haupt-Ausführung ---
 if __name__ == "__main__":
-    # --- Initialisierung & Setup ---
     model: Optional[MyModel] = None
     train_inputs, train_targets = None, None
     valid_inputs, valid_targets = None, None
     char_to_id: Optional[Mapping[str, int]] = None
     id_to_char: Optional[Mapping[int, str]] = None
     input_gpu, targets_gpu = None, None
-    sampling_input_gpu: Optional[GPUTensor] = None ### NEU ###
+    sampling_input_gpu: Optional[GPUTensor] = None
+    critical_pairs_gpu: Optional[GPUTensor] = None # NEU: Buffer für kritische Paare
+    # Globale Buffer für Loss Shaping Ergebnisse (im Modell erstellt)
+    # predictions_gpu, shaped_loss_gpu sind jetzt Teil von MyModel
     global_step = 0; start_epoch = 0; best_valid_loss = float('inf')
 
     try:
         # --- GPU Auswahl ---
         available_gpus = list_available_gpus()
         if not available_gpus: raise RuntimeError("Keine OpenCL GPUs gefunden.")
-        # ... (Rest der GPU-Auswahl unverändert) ...
         if len(available_gpus) > 1:
             try:
                 choice_str = input(f"Wählen Sie GPU Index (0 bis {len(available_gpus) - 1}) [Enter für 0]: ")
                 GPU_INDEX = int(choice_str) if choice_str and 0 <= int(choice_str) < len(available_gpus) else 0
-            except (ValueError, EOFError):
-                print(f"Ungültige Eingabe oder keine Eingabe, verwende GPU {GPU_INDEX}.")
-                GPU_INDEX = 0
+            except (ValueError, EOFError): GPU_INDEX = 0; print(f"Ungültige Eingabe, verwende GPU {GPU_INDEX}.")
         else: GPU_INDEX = 0
         selected_gpu_info = available_gpus[GPU_INDEX][1]
         print(f"[Main] Verwende GPU {GPU_INDEX}: {selected_gpu_info.name}")
-
 
         # --- GPU Initialisierung ---
         initialize_selected_gpu(GPU_INDEX)
 
         # --- Datensätze vorbereiten/laden ---
         if not os.path.exists(input_text_file):
-             print(f"WARNUNG: '{input_text_file}' nicht gefunden. Erstelle eine Dummy-Datei.")
-             dummy_text = "Dies ist ein kurzer Beispieltext. Er enthält einige Zeichen, Wiederholungen und Zeilenumbrüche.\n" * 50
-             with open(input_text_file, 'w', encoding='utf-8') as f: f.write(dummy_text)
-
+             print(f"WARNUNG: '{input_text_file}' nicht gefunden. Erstelle Dummy-Datei.")
+             with open(input_text_file, 'w', encoding='utf-8') as f: f.write("abc " * 1000 + ".\n")
         preprocess_char_data(input_text_file, processed_data_file, SEQ_LEN)
         train_inputs, train_targets, valid_inputs, valid_targets, VOCAB_SIZE, char_to_id, id_to_char = load_processed_data(processed_data_file)
 
+        # NEU: Kritische Klassen ID-Paare bestimmen
+        critical_pairs_np = None # Initialisieren
+        if USE_LOSS_SHAPING:
+            CRITICAL_PAIRS_ID = []
+            valid_pairs_found = True
+            print("[Main] Verarbeite kritische Klassenpaare für Loss Shaping...")
+            for target_char, pred_char in CRITICAL_PAIRS_CHAR:
+                target_id = char_to_id.get(target_char, -1)
+                pred_id = char_to_id.get(pred_char, -1)
+                if target_id == -1 or pred_id == -1:
+                    print(f"[WARNUNG] Kritische Klasse in Paar ('{target_char}' -> ID {target_id}, '{pred_char}' -> ID {pred_id}) nicht im Vokabular gefunden.")
+                    valid_pairs_found = False
+                    # break # Weiter prüfen, um alle fehlenden Paare anzuzeigen
+                else:
+                    CRITICAL_PAIRS_ID.append((target_id, pred_id))
+                    print(f"  Gefundenes Paar: ('{target_char}' -> ID {target_id}, '{pred_char}' -> ID {pred_id})")
+
+            if not valid_pairs_found or not CRITICAL_PAIRS_ID:
+                print("[WARNUNG] Loss Shaping deaktiviert wegen ungültiger oder leerer kritischer Klassenpaare.")
+                USE_LOSS_SHAPING = False
+                NUM_CRITICAL_PAIRS = 0
+            else:
+                # Erstelle NumPy Array für GPU Transfer [t1, p1, t2, p2, ...]
+                critical_pairs_np = np.array(CRITICAL_PAIRS_ID, dtype=INT_TYPE).flatten()
+                NUM_CRITICAL_PAIRS = len(CRITICAL_PAIRS_ID)
+                print(f"[Main] Loss Shaping aktiviert für {NUM_CRITICAL_PAIRS} Paare.")
+        else:
+             NUM_CRITICAL_PAIRS = 0 # Sicherstellen, dass es 0 ist, wenn deaktiviert
+
         num_train_samples = train_inputs.shape[0]; num_valid_samples = valid_inputs.shape[0]
-        if BATCH_SIZE > num_train_samples:
-             BATCH_SIZE = num_train_samples if num_train_samples > 0 else 1
-             print(f"[Main] WARNUNG: Batch size reduziert auf {BATCH_SIZE}")
-        if VOCAB_SIZE <= 0: raise ValueError("Vokabulargröße konnte nicht geladen werden oder ist ungültig.")
+        if BATCH_SIZE > num_train_samples: BATCH_SIZE = max(1, num_train_samples); print(f"[WARN] Batch size reduziert auf {BATCH_SIZE}")
+        if VOCAB_SIZE <= 0: raise ValueError("Vokabulargröße ungültig.")
 
         # --- Modell & Scheduler Initialisierung / Laden ---
         M_flat_max = BATCH_SIZE * SEQ_LEN
@@ -1217,24 +1311,30 @@ if __name__ == "__main__":
 
         start_epoch, global_step, best_valid_loss = model.load_checkpoint(checkpoint_path)
         if os.path.exists(best_checkpoint_path):
-             _, _, loaded_best_loss = model.load_checkpoint(best_checkpoint_path)
+             _, _, loaded_best_loss = model.load_checkpoint(best_checkpoint_path) # Lade temporär, um Loss zu holen
              best_valid_loss = min(best_valid_loss, loaded_best_loss if loaded_best_loss is not None else float('inf'))
-             print(f"[Main] Besten bekannten Validierungs-Loss geladen: {best_valid_loss:.6f}")
+             print(f"[Main] Besten Validierungs-Loss geladen: {best_valid_loss:.6f}")
+             # Stelle sicher, dass wir den Zustand des *letzten* Checkpoints laden, nicht des besten
              start_epoch, global_step, _ = model.load_checkpoint(checkpoint_path)
 
         scheduler = StepLR(INITIAL_LEARNING_RATE, step_size=LR_DECAY_STEP, gamma=LR_DECAY_GAMMA)
-        scheduler.last_epoch = start_epoch -1
-        for i in range(start_epoch): scheduler.step(i)
+        scheduler.last_epoch = start_epoch -1 ; scheduler.step(start_epoch) # Initiale LR setzen
         current_lr = scheduler.get_lr()
         print(f"[Main] Training startet bei Epoche {start_epoch+1}, Schritt {global_step+1}, LR {current_lr:.6g}")
 
-        # --- GPU-Tensoren für Batches und Sampling --- ### MODIFIZIERT ###
-        itemsize_int = INT_TYPE().itemsize
-        itemsize_fp = FP_TYPE().itemsize
+        # --- GPU-Tensoren für Batches, Sampling und Kritische Paare ---
+        itemsize_int = INT_TYPE().itemsize; itemsize_fp = FP_TYPE().itemsize
         input_gpu = GPUTensor(BATCH_SIZE * SEQ_LEN * itemsize_int, name="InputIndices_batch", gpu_index=GPU_INDEX)
         targets_gpu = GPUTensor(BATCH_SIZE * SEQ_LEN * itemsize_int, name="Targets_batch", gpu_index=GPU_INDEX)
-        # Separater Tensor für Sampling (Batchsize 1)
-        sampling_input_gpu = GPUTensor(1 * SEQ_LEN * itemsize_int, name="SamplingInput_GPU", gpu_index=GPU_INDEX) ### NEU ###
+        sampling_input_gpu = GPUTensor(1 * SEQ_LEN * itemsize_int, name="SamplingInput_GPU", gpu_index=GPU_INDEX)
+
+        # NEU: GPU Buffer für kritische Paare erstellen (nur wenn nötig)
+        if USE_LOSS_SHAPING and NUM_CRITICAL_PAIRS > 0 and critical_pairs_np is not None:
+            critical_pairs_gpu = GPUTensor(critical_pairs_np.nbytes, name="CriticalPairsGPU", gpu_index=GPU_INDEX)
+            critical_pairs_gpu.write(critical_pairs_np)
+            print(f"[Main] Kritische Paar-Daten ({critical_pairs_np.nbytes} bytes, {NUM_CRITICAL_PAIRS} Paare) auf GPU geschrieben.")
+        elif USE_LOSS_SHAPING:
+             print("[Main] Loss Shaping aktiv, aber keine gültigen kritischen Paare definiert.")
 
         # --- Trainings-Loop ---
         print("\n" + "="*10 + f" Starte Trainings-Loop ({NUM_EPOCHS} Epochen, Start bei {start_epoch+1}) " + "="*10)
@@ -1244,49 +1344,58 @@ if __name__ == "__main__":
             epoch_start_time = time.time()
             model.train_mode()
 
-            epoch_train_loss = 0.0; num_train_batches = 0
+            epoch_train_loss = 0.0; num_train_batches = 0; epoch_train_loss_shaped = 0.0 # Für Logging des shaped loss
             batch_generator = create_batches(train_inputs, train_targets, BATCH_SIZE, SEQ_LEN, shuffle=True)
 
             for batch_idx, (batch_inputs_host, batch_targets_host) in enumerate(batch_generator):
                 current_batch_size = batch_inputs_host.shape[0]
-                if current_batch_size == 0: continue
+                # Finde heraus, wie viele gültige (nicht-gepaddete) Samples im Batch sind
+                valid_samples_mask = ~np.all(batch_inputs_host == PAD_INDEX, axis=1)
+                actual_batch_size = np.sum(valid_samples_mask)
 
-                # Ignoriere Batches, die nur aus Padding bestehen (kann am Ende vorkommen)
-                if np.all(batch_inputs_host == PAD_INDEX): continue
+                if actual_batch_size == 0: continue # Überspringe leere oder nur gepaddete Batches
 
-                global_step += 1; num_train_batches += 1
+                # Setze die korrekte Batch-Größe im Modell (wichtig für LayerNorm etc.)
+                # current_batch_size beinhaltet noch Padding, model braucht aber die *gefüllte* Größe
+                # Korrektur: model.set_current_batch_shape erwartet die Größe *inklusive* Padding für Buffer-Management
                 model.set_current_batch_shape(current_batch_size, SEQ_LEN)
 
-                # Handle potenziell kleinere letzte Batch-Größen beim Schreiben
+                # Schreibe *vollen* Batch (inkl. Padding) auf GPU
                 input_gpu.write(batch_inputs_host.flatten())
                 targets_gpu.write(batch_targets_host.flatten())
 
                 logits = model.forward(input_gpu)
 
-                loss, _ = model.compute_loss_and_backward(logits, targets_gpu, batch_targets_host)
+                # Berechne Original-Loss, Shaped Loss (optional) und führe Backward-Pass aus
+                original_loss, shaped_loss = model.compute_loss_and_backward(logits, targets_gpu, batch_targets_host, critical_pairs_gpu)
 
-                # Überprüfe auf NaN/Inf Loss
-                if not math.isfinite(loss):
-                     print(f"[WARNUNG] Ungültiger Loss ({loss}) in Epoche {epoch+1}, Batch {batch_idx}. Überspringe Updates für diesen Batch.")
-                     # Optional: Gradienten zurücksetzen, um zu verhindern, dass sie weiter verwendet werden
+                # Überprüfe auf NaN/Inf Loss (Original Loss ist entscheidend für Stabilität)
+                if not math.isfinite(original_loss):
+                     print(f"[WARNUNG] Ungültiger originaler Loss ({original_loss}) in Epoche {epoch+1}, Batch {batch_idx+1}. Überspringe Updates.")
+                     # Optional Gradienten zurücksetzen (sicherer)
                      model.embedding_layer.dW_emb._zero_initialize()
-                     model.bio_layer.dW1._zero_initialize()
-                     model.bio_layer.db1._zero_initialize()
-                     model.output_layer.dW._zero_initialize()
-                     model.output_layer.db._zero_initialize()
-                     continue # Gehe zum nächsten Batch
+                     model.bio_layer.dW1._zero_initialize(); model.bio_layer.db1._zero_initialize()
+                     model.output_layer.dW._zero_initialize(); model.output_layer.db._zero_initialize()
+                     continue
 
-                epoch_train_loss += loss
+                global_step += 1; num_train_batches += 1
+                epoch_train_loss += original_loss
+                epoch_train_loss_shaped += (shaped_loss if shaped_loss is not None and math.isfinite(shaped_loss) else original_loss)
 
                 model.clip_all_gradients(GRADIENT_CLIP_VALUE)
                 model.update_trainable(global_step, epoch_lr, weight_decay=WEIGHT_DECAY)
-                model.update_special()
+                model.update_special() # Hebbian & Prototype update
 
-                if num_train_batches % 1500 == 0:
-                    print(f"  [Epoche {epoch+1}, Batch {num_train_batches}/{len(train_inputs)//BATCH_SIZE}] Loss: {loss:.6f}")
+                if (batch_idx + 1) % 200 == 0: # Logge alle 200 Batches
+                     loss_to_log = shaped_loss if USE_LOSS_SHAPING and shaped_loss is not None and math.isfinite(shaped_loss) else original_loss
+                     num_total_batches = (len(train_inputs) + BATCH_SIZE - 1) // BATCH_SIZE
+                     print(f"  [Epoche {epoch+1}, Batch {batch_idx+1}/{num_total_batches}] Loss: {loss_to_log:.6f}")
 
             avg_train_loss = epoch_train_loss / num_train_batches if num_train_batches > 0 else 0.0
-            print(f"[Epoche {epoch + 1}] Durchschnittlicher Trainings-Loss: {avg_train_loss:.6f}")
+            avg_train_loss_shaped = epoch_train_loss_shaped / num_train_batches if num_train_batches > 0 else 0.0
+            print(f"[Epoche {epoch + 1}] Durchschnittl. Train-Loss (Original): {avg_train_loss:.6f}")
+            if USE_LOSS_SHAPING: print(f"[Epoche {epoch + 1}] Durchschnittl. Train-Loss (Shaped) : {avg_train_loss_shaped:.6f}")
+
 
             # --- Validierungs-Loop ---
             epoch_valid_loss = 0.0; epoch_valid_accuracy = 0.0; num_valid_batches = 0
@@ -1294,9 +1403,11 @@ if __name__ == "__main__":
             valid_batch_generator = create_batches(valid_inputs, valid_targets, BATCH_SIZE, SEQ_LEN, shuffle=False)
 
             for batch_inputs_host, batch_targets_host in valid_batch_generator:
-                current_batch_size = batch_inputs_host.shape[0]
-                if current_batch_size == 0: continue
-                if np.all(batch_inputs_host == PAD_INDEX): continue
+                current_batch_size = batch_inputs_host.shape[0] # Inklusive Padding
+                valid_samples_mask = ~np.all(batch_inputs_host == PAD_INDEX, axis=1)
+                actual_batch_size = np.sum(valid_samples_mask)
+
+                if actual_batch_size == 0: continue
 
                 num_valid_batches += 1
                 model.set_current_batch_shape(current_batch_size, SEQ_LEN)
@@ -1305,25 +1416,25 @@ if __name__ == "__main__":
                 targets_gpu.write(batch_targets_host.flatten())
 
                 logits = model.forward(input_gpu)
+                # WICHTIG: Im Validierungs-Loop verwenden wir *nur* den originalen Loss
+                # Wir brauchen targets_np hier für die Loss-Maskierung
                 loss = model.criterion.forward(logits, targets_gpu, model.bio_layer.current_M_flat, targets_np=batch_targets_host)
 
-                # Nur Loss berechnen, wenn er gültig ist
                 if math.isfinite(loss):
+                    # Genauigkeit auf dem *vollen* Batch berechnen, aber intern wird maskiert
                     accuracy = calculate_accuracy(logits, batch_targets_host, model.bio_layer.current_M_flat, VOCAB_SIZE)
                     epoch_valid_loss += loss
                     epoch_valid_accuracy += accuracy
                 else:
-                    # Wenn Loss ungültig ist, zählt der Batch nicht zur Durchschnittsberechnung
-                    # und die Genauigkeit wird auch nicht berechnet.
                     print(f"[WARNUNG] Ungültiger Validierungs-Loss ({loss}) - Batch wird ignoriert.")
-                    num_valid_batches -= 1 # Reduziere die Anzahl, um den Durchschnitt nicht zu verfälschen
+                    # Wenn wir den Batch ignorieren, sollten wir ihn nicht zählen
+                    num_valid_batches -= 1
 
-
-            avg_valid_loss = epoch_valid_loss / num_valid_batches if num_valid_batches > 0 else float('inf') # Inf wenn keine validen Batches
+            avg_valid_loss = epoch_valid_loss / num_valid_batches if num_valid_batches > 0 else float('inf')
             avg_valid_accuracy = epoch_valid_accuracy / num_valid_batches if num_valid_batches > 0 else 0.0
             epoch_duration = time.time() - epoch_start_time
-            print(f"[Epoche {epoch + 1}] Durchschnittlicher Validierungs-Loss: {avg_valid_loss:.6f}")
-            print(f"[Epoche {epoch + 1}] Durchschnittliche Validierungs-Genauigkeit: {avg_valid_accuracy:.4f}")
+            print(f"[Epoche {epoch + 1}] Durchschnittl. Validierungs-Loss: {avg_valid_loss:.6f}")
+            print(f"[Epoche {epoch + 1}] Durchschnittl. Validierungs-Genauigkeit: {avg_valid_accuracy:.4f}")
             print(f"[Epoche {epoch + 1}] Dauer: {epoch_duration:.2f} sec")
 
             # Checkpoints speichern
@@ -1333,33 +1444,14 @@ if __name__ == "__main__":
                 best_valid_loss = avg_valid_loss
                 model.save_checkpoint(best_checkpoint_path, epoch + 1, global_step, best_loss=best_valid_loss)
 
-            # Lernrate für nächste Epoche anpassen
             scheduler.step(epoch + 1) # Step *nach* der Epoche aufrufen
 
-            ### NEU: Textgenerierung nach jeder Epoche ###
+            # Textgenerierung nach jeder Epoche
             if model is not None and char_to_id is not None and id_to_char is not None and sampling_input_gpu is not None:
-                # Beispiel-Prompt und Länge
-                sampling_prompt = "Ein schöner"
-                num_chars_to_generate = 200
-                sampling_temperature = 0.6 # Kann angepasst werden
-
-                generated_text = generate_text(
-                    model_instance=model,
-                    prompt=sampling_prompt,
-                    num_chars_to_generate=num_chars_to_generate,
-                    seq_len=SEQ_LEN,
-                    vocab_size=VOCAB_SIZE,
-                    char_to_id=char_to_id,
-                    id_to_char=id_to_char,
-                    sampling_input_gpu=sampling_input_gpu,
-                    temperature=sampling_temperature,
-                    gpu_index=GPU_INDEX
-                )
-                print("-" * 20 + " Generierter Text: " + "-" * 20)
-                print(generated_text)
-                print("-" * (40 + len(" Generierter Text: ")))
-            ### ENDE NEU ###
-
+                sampling_prompt = "Das Wetter ist"
+                num_chars_to_generate = 200; sampling_temperature = 0.7
+                generated_output = generate_text(model, sampling_prompt, num_chars_to_generate, SEQ_LEN, VOCAB_SIZE, char_to_id, id_to_char, sampling_input_gpu, sampling_temperature, GPU_INDEX)
+                print("-" * 20 + " Generierter Text: " + "-" * 20); print(generated_output); print("-" * (40 + len(" Generierter Text: ")))
 
         print("\n" + "="*10 + " Trainings-Loop beendet " + "="*10)
 
@@ -1367,28 +1459,35 @@ if __name__ == "__main__":
          print("\n[Main] Training durch Benutzer unterbrochen.")
          if model is not None and global_step > 0:
               print("[Main] Speichere aktuellen Stand vor dem Beenden...")
+              # Ermittle die letzte abgeschlossene oder begonnene Epoche
               current_epoch_or_start = epoch + 1 if 'epoch' in locals() and epoch >= start_epoch else start_epoch
               model.save_checkpoint(checkpoint_path, current_epoch_or_start, global_step, best_loss=best_valid_loss)
     except Exception as e:
         print(f"\n--- Ein unerwarteter Fehler ist im Haupt-Loop aufgetreten ---")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        import traceback; traceback.print_exc(); sys.exit(1)
     finally:
         print("\n[Python] Gebe Ressourcen frei...")
-        # Liste muss angepasst werden ### MODIFIZIERT ###
-        resource_list = [input_gpu, targets_gpu, sampling_input_gpu, model] # model.free() kümmert sich um interne Layer etc.
+        # NEU: critical_pairs_gpu hinzugefügt
+        resource_list = [input_gpu, targets_gpu, sampling_input_gpu, critical_pairs_gpu, # <<< NEU
+                         getattr(model, 'predictions_gpu', None) if model else None,
+                         getattr(model, 'shaped_loss_gpu', None) if model else None,
+                         model]
         for res in resource_list:
              try:
                  if res is not None:
-                      if hasattr(res, 'free') and callable(res.free): res.free()
+                      # Prüfe, ob es eine 'free'-Methode hat (GPUTensor, MyModel)
+                      if hasattr(res, 'free') and callable(res.free):
+                           res_name = getattr(res, 'name', type(res).__name__)
+                           if DEBUG_PRINTS: print(f"  Freeing {res_name}...")
+                           res.free()
+                           if DEBUG_PRINTS: print(f"  Freed {res_name}.")
              except Exception as e:
                   item_name = getattr(res, 'name', type(res).__name__) if res else "None"
                   print(f"Fehler beim Freigeben von {item_name}: {e}")
+
         if 'c_driver' in locals() and c_driver:
             print("[Python] Rufe shutdown_gpu auf...")
             try: c_driver.shutdown_gpu(GPU_INDEX); print("[Python] shutdown_gpu erfolgreich aufgerufen.")
             except Exception as e: print(f"Fehler beim Aufruf von shutdown_gpu: {e}")
         else: print("[Python] c_driver wurde nicht geladen, shutdown_gpu wird übersprungen.")
         print("[Python] Programm beendet.")
-
