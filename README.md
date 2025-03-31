@@ -337,12 +337,466 @@ python char_level_network.py
 ### Checkpointing
 *   Speichert/Lädt automatisch den letzten und besten Zustand (`.pkl`-Dateien in `checkpoints/`). Ermöglicht Fortsetzen des Trainings.
 
-### Textgenerierung (Konzept)
-(Unverändert - Beschreibung, wie man Text generieren könnte, falls implementiert.)
+---
 
-## 8. Detaillierte API-Referenz der C-Bibliothek
+### Textgenerierung (Implementiert)
 
-(Unverändert - siehe Abschnitt 8 der vorherigen detaillierten README für die Liste und Beschreibung der C-Funktionen.)
+Das Framework enthält eine Funktion (`generate_text` in `char_level_network.py`), um Text sequenziell Zeichen für Zeichen zu generieren, basierend auf einem trainierten Modellzustand.
+
+*   **Funktionsweise:**
+    1.  Das Modell wird in den Evaluationsmodus (`eval_mode`) versetzt.
+    2.  Ein Anfangs-Prompt (Textsequenz) wird in Token-IDs kodiert.
+    3.  Iterativ wird die jeweils letzte Sequenz von `SEQ_LEN` Tokens als Input für das Modell verwendet (ggf. mit Padding am Anfang).
+    4.  Das Modell führt einen Forward-Pass durch und erzeugt Logits für das *nächste* Zeichen.
+    5.  Die Logits werden mittels Softmax (mit einer einstellbaren `temperature`) in eine Wahrscheinlichkeitsverteilung umgewandelt.
+    6.  Ein Token-ID wird gemäß dieser Verteilung gesampelt.
+    7.  Die gesampelte ID wird an die aktuelle Sequenz angehängt.
+    8.  Schritte 3-7 werden `num_chars_to_generate` Mal wiederholt.
+    9.  Die resultierende Sequenz von IDs wird zurück in einen Text dekodiert.
+*   **Nutzung im Training:** Nach jeder Trainingsepoche wird automatisch ein Beispieltext mit einem festen Prompt und einer festen Temperatur generiert und ausgegeben. Dies dient der **qualitativen Beurteilung des Lernfortschritts** und der Kohärenz des Modells über die Zeit.
+*   **Parameter:** Die Funktion `generate_text` erlaubt die Steuerung von Prompt, Generierungslänge und Sampling-Temperatur (niedrigere Temperatur = deterministischer, höhere Temperatur = zufälliger).
+
+---
+Training:
+```bash
+[Python] C-Treiber-Bibliothek geladen von: G:\c_dll_nn\CL\CipherCore_OpenCl.dll
+[Python] CTypes-Definition für execute_embedding_backward_gpu (via non-atomic two-pass) geladen.
+[Python] CTypes-Definitionen für GPU Prototyp-Update geladen.
+Verfügbare OpenCL GPUs:
+------------------------------
+Plattform 0: AMD Accelerated Parallel Processing
+  GPU Index 0: gfx90c
+    Compute Units: 7, Max Clock: 1800 MHz, Global Memory: 9283 MB
+  GPU Index 1: gfx1034
+    Compute Units: 8, Max Clock: 2191 MHz, Global Memory: 4080 MB
+Plattform 1: OpenCLOn12
+  GPU Index 2: AMD Radeon(TM) Graphics
+    Compute Units: 1, Max Clock: 12 MHz, Global Memory: 11951 MB
+  GPU Index 3: AMD Radeon(TM) RX 6500M
+    Compute Units: 1, Max Clock: 12 MHz, Global Memory: 4048 MB
+------------------------------
+Wählen Sie GPU Index (0 bis 3) [Enter für 0]: 1
+[Main] Verwende GPU 1: gfx1034
+[Python] Initialisiere GPU mit Index 1 über C-Treiber...
+[C] initialize_gpu: Initializing OpenCL for GPU index 1...
+[C] initialize_gpu: Using platform: AMD Accelerated Parallel Processing
+[C] initialize_gpu: Found 2 GPU devices.
+[C] initialize_gpu: Using device index 1: gfx1034
+[C] initialize_gpu: FP64 Support (CL_FP_FMA flag): Yes
+[C] initialize_gpu: Found 'cl_khr_global_int32_base_atomics'. Basic 32-bit global atomics SUPPORTED.
+[C] initialize_gpu: Found 'cl_khr_int64_base_atomics'. 64-bit atomics SUPPORTED (may be needed by atomic_add_float).
+[C] initialize_gpu: Atomics Support Flag (has_atomics_support): 1
+[C] initialize_gpu: Context created.
+[C] initialize_gpu: Command queue created.
+[C] initialize_gpu: Compiling ALL OpenCL kernels...
+[C] initialize_gpu: Compiling kernel 'matrix_multiply'...
+[C] initialize_gpu: Compiling kernel 'softmax_rowwise'...
+[C] initialize_gpu: Compiling kernel 'gelu_elementwise'...
+[C] initialize_gpu: Compiling kernel 'add_elementwise'...
+[C] initialize_gpu: Compiling kernel 'mul_elementwise'...
+[C] initialize_gpu: Compiling kernel 'layer_norm'...
+[C] initialize_gpu: Compiling kernel 'transpose'...
+[C] initialize_gpu: Compiling kernel 'gelu_backward_elementwise'...
+[C] initialize_gpu: Compiling kernel 'matmul_backward_da'...
+[C] initialize_gpu: Compiling kernel 'matmul_backward_db'...
+[C] initialize_gpu: Compiling kernel 'layer_norm_backward'...
+[C] initialize_gpu: Compiling kernel 'adam_update'...
+[C] initialize_gpu: Compiling kernel 'softmax_backward'...
+[C] initialize_gpu: Compiling kernel 'mul_backward'...
+[C] initialize_gpu: Compiling kernel 'transpose_backward'...
+[C] initialize_gpu: Compiling kernel 'embedding_lookup'...
+[C] initialize_gpu: Compiling kernel 'reduce_sum_axis01'...
+[C] initialize_gpu: Compiling kernel 'broadcast_add_bias'...
+[C] initialize_gpu: Compiling kernel 'transpose_batched_last_two'...
+[C] initialize_gpu: Compiling kernel 'transpose_12_batched'...
+[C] initialize_gpu: Compiling kernel 'matmul_batched'...
+[C] initialize_gpu: Compiling kernel 'matmul_batched_backward_da'...
+[C] initialize_gpu: Compiling kernel 'matmul_batched_backward_db'...
+[C] initialize_gpu: Compiling kernel 'log_softmax_stable_rowwise'...
+[C] initialize_gpu: Compiling kernel 'cross_entropy_loss_grad'...
+[C] initialize_gpu: Compiling kernel 'add_broadcast_pe'...
+[C] initialize_gpu: Compiling kernel 'threshold_spike'...
+[C] initialize_gpu: Compiling kernel 'add_bias_mn'...
+[C] initialize_gpu: Compiling kernel 'dynamic_token_assignment'...
+[C] initialize_gpu: Compiling kernel 'pairwise_similarity_dot'...
+[C] initialize_gpu: Compiling kernel 'hebbian_update_local_reduce'...
+[C] initialize_gpu: Compiling kernel 'embedding_backward_calc_delta_local'...
+[C] initialize_gpu: Compiling kernel 'proto_segmented_sum_atomic'...
+[C] initialize_gpu: Compiling kernel 'proto_update_step'...
+[C] initialize_gpu: All kernels compiled successfully.
+[C] initialize_gpu: Initialization OK for GPU 1 (gfx1034).
+[Python] GPU 1 erfolgreich initialisiert.
+[DataPrep] Starte Vorverarbeitung für 'G:\c_dll_nn\mini_data\mini_input.txt'...
+[DataPrep] Text geladen (677654 Zeichen). Erstelle Vokabular...
+[DataPrep] Vokabulargröße: 98
+[DataPrep] Text in 677654 IDs umgewandelt.
+[DataPrep] Erstelle 677590 Input/Target-Sequenzpaare...
+[DataPrep] Aufgeteilt: 609831 Trainings-, 67759 Validierungssequenzen.
+[DataPrep] Verarbeitete Daten und Vokabular gespeichert in 'G:\c_dll_nn\mini_data\mini_char_dataset.npz' und 'G:\c_dll_nn\mini_data\mini_char_dataset.npz_mini_vocab.pkl'.
+[DataLoader] Lade verarbeitete Daten aus 'G:\c_dll_nn\mini_data\mini_char_dataset.npz'...
+[DataLoader] Lade Vokabular aus 'G:\c_dll_nn\mini_data\mini_char_dataset.npz_mini_vocab.pkl'...
+[DataLoader] Verarbeitete Daten geladen:
+  Train Inputs Shape: (609831, 64), Typ: int32
+  Train Targets Shape: (609831, 64), Typ: int32
+  Valid Inputs Shape: (67759, 64), Typ: int32
+  Valid Targets Shape: (67759, 64), Typ: int32
+  Vokabulargröße: 98
+[Model Init] Erstelle Layer...
+[Model Init] Erstelle Buffer...
+[Model Init] Initialisierung abgeschlossen.
+[Model] WARNUNG: Checkpoint-Datei nicht gefunden: G:\c_dll_nn\mini_checkpoints\model_char_emb128_h384_t72.pkl. Initialisiere Gewichte neu.
+[EmbeddingLayer] Weights initialized (98x128)
+[Main] Training startet bei Epoche 1, Schritt 1, LR 0.0001
+
+========== Starte Trainings-Loop (50 Epochen, Start bei 1) ==========
+
+--- Epoche 1/50 (LR: 0.0001) ---
+  [Epoche 1, Batch 1000/9528] Loss: 2.485620
+  [Epoche 1, Batch 2000/9528] Loss: 2.432409
+  [Epoche 1, Batch 3000/9528] Loss: 2.462062
+  [Epoche 1, Batch 4000/9528] Loss: 2.423114
+  [Epoche 1, Batch 5000/9528] Loss: 2.443186
+  [Epoche 1, Batch 6000/9528] Loss: 2.415995
+  [Epoche 1, Batch 7000/9528] Loss: 2.372571
+  [Epoche 1, Batch 8000/9528] Loss: 2.398677
+  [Epoche 1, Batch 9000/9528] Loss: 2.413156
+[Epoche 1] Durchschnittlicher Trainings-Loss: 2.489278
+[Epoche 1] Durchschnittlicher Validierungs-Loss: 2.444133
+[Epoche 1] Durchschnittliche Validierungs-Genauigkeit: 0.2811
+[Epoche 1] Dauer: 2503.71 sec
+[Epoche 1] Neuer bester Validierungs-Loss! Speichere besten Checkpoint.
+
+--- Generiere Text (Prompt: 'aufzustehen und einen', Länge: 200, Temp: 0.7) ---
+--- Generierung abgeschlossen (0.73 sec) ---
+-------------------- Generierter Text: --------------------
+aufzustehen und einen So winte daus wübe Daucht volaus war den ven harut wite dn agengen scharübe Kin schmen ichtendackasich h dan Kerkarben »eh en Ben bellsivebe e Labend e s, ben Bun din den eicher en ultes sier danih d
+-----------------------------------------------------------
+
+--- Epoche 2/50 (LR: 0.0001) ---
+  [Epoche 2, Batch 1000/9528] Loss: 2.394746
+  [Epoche 2, Batch 2000/9528] Loss: 2.404741
+  [Epoche 2, Batch 3000/9528] Loss: 2.399724
+  [Epoche 2, Batch 4000/9528] Loss: 2.421746
+  [Epoche 2, Batch 5000/9528] Loss: 2.401037
+  [Epoche 2, Batch 6000/9528] Loss: 2.409263
+  [Epoche 2, Batch 7000/9528] Loss: 2.346956
+  [Epoche 2, Batch 8000/9528] Loss: 2.410120
+  [Epoche 2, Batch 9000/9528] Loss: 2.419015
+[Epoche 2] Durchschnittlicher Trainings-Loss: 2.400251
+[Epoche 2] Durchschnittlicher Validierungs-Loss: 2.442434
+[Epoche 2] Durchschnittliche Validierungs-Genauigkeit: 0.2813
+[Epoche 2] Dauer: 2500.78 sec
+[Epoche 2] Neuer bester Validierungs-Loss! Speichere besten Checkpoint.
+[Scheduler] Lernrate reduziert auf 5e-05 für Epoche 3
+
+--- Generiere Text (Prompt: 'aufzustehen und einen', Länge: 200, Temp: 0.7) ---
+--- Generierung abgeschlossen (0.72 sec) ---
+-------------------- Generierter Text: --------------------
+aufzustehen und einenen erben meis zun denen, er ün ür d asorauffer, zun enduss n ge, sine s erktstlteilsimen un meich Bungen Walareinzufaun se e vin Gene Tr deint Ko, inden h e kt lsichm Cochtl Gegen den Wah kengen deins
+-----------------------------------------------------------
+
+--- Epoche 3/50 (LR: 5e-05) ---
+  [Epoche 3, Batch 1000/9528] Loss: 2.401029
+  [Epoche 3, Batch 2000/9528] Loss: 2.421122
+  [Epoche 3, Batch 3000/9528] Loss: 2.388366
+  [Epoche 3, Batch 4000/9528] Loss: 2.415629
+  [Epoche 3, Batch 5000/9528] Loss: 2.381097
+  [Epoche 3, Batch 6000/9528] Loss: 2.432717
+  [Epoche 3, Batch 7000/9528] Loss: 2.410620
+  [Epoche 3, Batch 8000/9528] Loss: 2.398923
+  [Epoche 3, Batch 9000/9528] Loss: 2.369005
+[Epoche 3] Durchschnittlicher Trainings-Loss: 2.398910
+[Epoche 3] Durchschnittlicher Validierungs-Loss: 2.442929
+[Epoche 3] Durchschnittliche Validierungs-Genauigkeit: 0.2817
+[Epoche 3] Dauer: 2500.69 sec
+
+--- Generiere Text (Prompt: 'aufzustehen und einen', Länge: 200, Temp: 0.7) ---
+--- Generierung abgeschlossen (0.73 sec) ---
+-------------------- Generierter Text: --------------------
+aufzustehen und einenere ngarder wm azun in erehier eierte se der ben wehte dich Eind ste iota frer And einen ger d s Paro Steieindeins e g s n Kon dem n s s dabe – hein sondandicktzun war wach m de d wach h esesiendisile
+-----------------------------------------------------------
+```
+
+---
+
+## 8. Detaillierte API-Referenz der C-Bibliothek (CipherCore_OpenCl.dll / libsimulated_driver.so)
+
+Diese Referenz beschreibt die von der C/OpenCL-Bibliothek exportierten Funktionen (DLLEXPORT), die über ctypes aus Python aufgerufen werden können.
+
+Grundlegende Typen & Handles
+
+GPU-Speicherhandle: Wird als void* über die C-API übergeben. Intern repräsentiert dies ein cl_mem-Objekt (OpenCL Memory Buffer).
+
+Rückgabewerte: Viele Funktionen geben int zurück: 1 signalisiert Erfolg, 0 signalisiert einen Fehler (Details werden oft auf stderr ausgegeben).
+
+Initialisierung & Ressourcenverwaltung
+int initialize_gpu(int gpu_index)
+
+Zweck: Initialisiert die OpenCL-Umgebung für das angegebene GPU-Gerät. Findet Plattformen/Geräte, erstellt Kontext und Command Queue, prüft Gerätefähigkeiten (FP64, Atomics) und kompiliert alle vordefinierten OpenCL-Kernel. Muss vor allen anderen GPU-Operationen aufgerufen werden.
+
+Parameter:
+
+gpu_index (int): Der 0-basierte Index des zu verwendenden GPU-Geräts.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+void shutdown_gpu(int gpu_index)
+
+Zweck: Gibt alle globalen OpenCL-Ressourcen frei (Kernels, Programme, Command Queue, Kontext). Sollte am Ende der Anwendung aufgerufen werden.
+
+Parameter:
+
+gpu_index (int): Der Index der GPU (derzeit nicht direkt verwendet, da globale Ressourcen freigegeben werden).
+
+Rückgabewert: void.
+
+Speicherverwaltung & Transfer
+void* allocate_gpu_memory(int gpu_index, size_t size)
+
+Zweck: Alloziert einen Speicherpuffer der angegebenen Größe auf dem initialisierten GPU-Gerät.
+
+Parameter:
+
+gpu_index (int): Der Index der GPU (derzeit nicht direkt verwendet).
+
+size (size_t): Die Größe des zu allozierenden Puffers in Bytes (muss > 0 sein).
+
+Rückgabewert: Ein void*-Handle zum cl_mem-Objekt bei Erfolg, NULL bei Fehler.
+
+void free_gpu_memory(int gpu_index, void* buffer_handle)
+
+Zweck: Gibt einen zuvor alloziierten GPU-Speicherpuffer frei.
+
+Parameter:
+
+gpu_index (int): Der Index der GPU (derzeit nicht direkt verwendet).
+
+buffer_handle (void*): Das cl_mem-Handle des freizugebenden Puffers. Ignoriert NULL-Handles.
+
+Rückgabewert: void.
+
+int write_host_to_gpu_blocking(int gpu_index, void* gpu_buffer_handle, size_t offset, size_t size, const void* host_source_ptr)
+
+Zweck: Schreibt Daten blockierend vom Host-Speicher in einen GPU-Puffer. Die Funktion kehrt erst zurück, wenn der Kopiervorgang abgeschlossen ist.
+
+Parameter:
+
+gpu_index (int): GPU-Index (derzeit nicht direkt verwendet).
+
+gpu_buffer_handle (void*): Handle des Ziel-GPU-Puffers.
+
+offset (size_t): Start-Offset (in Bytes) im GPU-Puffer.
+
+size (size_t): Anzahl der zu schreibenden Bytes.
+
+host_source_ptr (const void*): Zeiger auf die Quelldaten im Host-Speicher.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int read_gpu_to_host_blocking(int gpu_index, void* gpu_buffer_handle, size_t offset, size_t size, void* host_destination_ptr)
+
+Zweck: Liest Daten blockierend von einem GPU-Puffer in den Host-Speicher. Die Funktion kehrt erst zurück, wenn der Kopiervorgang abgeschlossen ist.
+
+Parameter:
+
+gpu_index (int): GPU-Index (derzeit nicht direkt verwendet).
+
+gpu_buffer_handle (void*): Handle des Quell-GPU-Puffers.
+
+offset (size_t): Start-Offset (in Bytes) im GPU-Puffer.
+
+size (size_t): Anzahl der zu lesenden Bytes.
+
+host_destination_ptr (void*): Zeiger auf den Zielspeicher im Host.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+Kernel-Ausführungsfunktionen (Auswahl mit Details)
+
+Diese Funktionen reihen die Ausführung der entsprechenden OpenCL-Kernel in die Command Queue ein. Die Ausführung erfolgt asynchron, es sei denn, finish_queue_and_check wird aufgerufen oder blockierende Transfers werden genutzt.
+
+int execute_matmul_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_a, void* buffer_b, void* buffer_c, int B, int M, int N, int K)
+
+Zweck: Führt Matrixmultiplikation C = A @ B aus. Unterstützt Batched-Input A (B, M, K) multipliziert mit B (K, N) zu C (B, M, N). Bei B=1 erfolgt eine Standard-2D-Matrixmultiplikation.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_softmax_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_input, void* buffer_output, int num_rows, int row_size)
+
+Zweck: Wendet zeilenweise Softmax (numerisch stabil) auf die Eingabe an.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_gelu_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_input, void* buffer_output, int num_elements)
+
+Zweck: Wendet elementweise die GELU-Aktivierungsfunktion an.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_add_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_a, void* buffer_b, void* buffer_c, int num_elements)
+
+Zweck: Führt elementweise Addition C = A + B aus. Wird auch für den zweiten Pass des Embedding Backwards genutzt.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_add_bias_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_a_or_c, void* buffer_b_bias, int M, int N)
+
+Zweck: Addiert einen Bias-Vektor (buffer_b_bias, Größe N) zu jeder Zeile einer Matrix (buffer_a_or_c, Größe M x N). Operation erfolgt in-place auf buffer_a_or_c.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_layernorm_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_input, void* buffer_output, int num_rows, int row_size, float eps)
+
+Zweck: Führt zeilenweise Layer Normalization (ohne Skalierung/Verschiebung durch Gamma/Beta) durch.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_clone_on_gpu(...)
+
+Signatur: (int gpu_index, void* src_buffer, void* dst_buffer, size_t size)
+
+Zweck: Kopiert Daten innerhalb des GPU-Speichers von src_buffer nach dst_buffer.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_gelu_backward_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_input, void* buffer_grad_output, void* buffer_grad_input, int num_elements)
+
+Zweck: Berechnet den Gradienten für die GELU-Aktivierung (dL/dx = dL/dy * dGELU/dx).
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_matmul_backward_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_a, void* buffer_b, void* buffer_dc, void* buffer_da, void* buffer_db, int B, int M, int N, int K)
+
+Zweck: Berechnet die Gradienten für die Matrixmultiplikation (dA = dC @ B^T und dB = A^T @ dC, summiert über Batch B für dB). buffer_da oder buffer_db können NULL sein, falls der entsprechende Gradient nicht benötigt wird.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_layernorm_backward_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_dy, void* buffer_x, void* buffer_dx, int num_rows, int row_size, float eps)
+
+Zweck: Berechnet den Gradienten für die Layer Normalization.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_adam_update_on_gpu(...)
+
+Signatur: (int gpu_index, void* param_buffer, void* grad_buffer, void* m_buffer, void* v_buffer, int num_elements, int t, float lr, float beta1, float beta2, float eps, float weight_decay)
+
+Zweck: Führt einen Adam-Optimierungsschritt durch (aktualisiert param_buffer, m_buffer, v_buffer). Benötigt den aktuellen Zeitschritt t (>0).
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_embedding_lookup_gpu(...)
+
+Signatur: (int gpu_index, void* idx, void* w, void* o, int b, int s, int d, int v)
+
+Zweck: Führt das Embedding-Lookup durch: output[b, s, :] = weights[indices[b, s], :].
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_embedding_backward_gpu(...)
+
+Signatur: (int gpu_index, void* d_o, void* idx, void* d_w, int b, int s, int d, int v)
+
+Zweck: Berechnet den Gradienten für die Embedding-Gewichte (d_w). Nutzt intern eine 2-Pass-Strategie mit lokaler Reduktion (keine globalen Atomics). Addiert Gradienten zu d_w.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_reduce_sum_gpu(...)
+
+Signatur: (int gpu_index, void* in, void* out, int B, int M, int N)
+
+Zweck: Reduziert einen Tensor der Form (B, M, N) über die Achsen 0 (B) und 1 (M) zu einem Tensor der Form (N). Wird für Bias-Gradienten verwendet. Nutzt lokale Reduktion.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_log_softmax_stable_gpu(...)
+
+Signatur: (int gpu_index, void* input_logits, void* output_log_probs, int B_S_rows, int V_cols)
+
+Zweck: Berechnet zeilenweise den Logarithmus des Softmax (numerisch stabil).
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_cross_entropy_loss_grad_gpu(...)
+
+Signatur: (int gpu_index, void* log_probs, void* target_indices, void* grad_input, void* loss_per_sample, int num_rows, int V)
+
+Zweck: Berechnet den Cross-Entropy-Loss (erwartet Log-Wahrscheinlichkeiten als Input) und gleichzeitig den Gradienten bzgl. der Logits (grad_input = probs - one_hot). Speichert den Verlust pro Sample in loss_per_sample.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_hebbian_update_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_a, void* buffer_c, void* buffer_w, float learning_rate, int B, int M, int N, int K)
+
+Zweck: Aktualisiert die Hebb'sche Gewichtsmatrix W (K, N) basierend auf prä- (A, (B, M, K)) und post-synaptischen (C, (B, M, N)) Aktivierungen. Nutzt lokale Reduktion. Update: W += lr * sum(A^T @ C).
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_threshold_spike_on_gpu(...)
+
+Signatur: (int gpu_index, void* buffer_activations, void* buffer_spikes, float threshold, int num_elements)
+
+Zweck: Erzeugt binäre Spikes (0.0 oder 1.0) basierend auf einem Schwellwert.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_dynamic_token_assignment_gpu(...)
+
+Signatur: (int gpu_index, void* activations_bse, void* prototypes_te, void* output_indices_bs, int B, int S, int E, int T)
+
+Zweck: Weist jeden Aktivierungsvektor (B, S, E) dem Prototyp (T, E) mit der höchsten Dot-Produkt-Ähnlichkeit zu und schreibt den Index des Prototyps nach output_indices_bs (B, S).
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+int execute_proto_segmented_sum_gpu(...)
+
+Signatur: (int gpu_index, void* activations_flat, void* indices_flat, void* proto_sums, void* proto_counts, int num_elements_flat, int E, int T)
+
+Zweck: Aggregiert (summiert) Aktivierungsvektoren (activations_flat) für jeden Prototyp-Index (indices_flat) atomar. Schreibt die Summen nach proto_sums (T, E) und die Zählungen nach proto_counts (T). Benötigt cl_khr_global_int32_base_atomics. proto_sums und proto_counts müssen vorab genullt werden.
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler (inkl. wenn Atomics nicht unterstützt werden).
+
+int execute_proto_update_step_gpu(...)
+
+Signatur: (int gpu_index, void* prototypes, void* proto_sums, void* proto_counts, float learning_rate, int E, int T)
+
+Zweck: Aktualisiert die Prototypen (prototypes, T, E) basierend auf den akkumulierten Summen (proto_sums) und Zählungen (proto_counts) nach der Formel: proto = (1-lr)*proto + lr * (sum/count).
+
+Rückgabewert: 1 bei Erfolg, 0 bei Fehler.
+
+(Weitere execute_... Funktionen für Batched Ops, Transpose etc. sind im Code vorhanden und folgen ähnlichen Mustern.)
+
+Simulationsfunktionen
+unsigned int simulated_get_compute_unit_count(int gpu_index)
+
+Zweck: Gibt eine Dummy-Anzahl von Compute Units zurück (z.B. 4). Wird nur in Simulationsmodi verwendet (nicht Teil der eigentlichen OpenCL-Implementierung).
+
+Parameter:
+
+gpu_index (int): Unbenutzt.
+
+Rückgabewert: Eine feste Zahl (z.B. 4).
+
+---
 
 ## 9. Leistungsaspekte & Optimierungspotenzial
 
