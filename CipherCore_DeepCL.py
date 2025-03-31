@@ -32,12 +32,12 @@ ADAM_EPS = 1e-8
 PAD_INDEX = -1 # Index für Padding in Targets
 
 # --- Trainings-Hyperparameter ---
-INITIAL_LEARNING_RATE = 3e-4 # Etwas niedriger starten für Textgen
+INITIAL_LEARNING_RATE = 1e-2 # Etwas niedriger starten für Textgen
 WEIGHT_DECAY = 0.01
-NUM_EPOCHS = 20 # Reduziert für ersten Test
+NUM_EPOCHS = 13 # Reduziert für ersten Test
 BATCH_SIZE = 64
 GRADIENT_CLIP_VALUE = 1.0 # Wert für Clipping, None zum Deaktivieren
-LR_DECAY_STEP = 7 # Lernrate schneller anpassen
+LR_DECAY_STEP = 1 # Lernrate schneller anpassen
 LR_DECAY_GAMMA = 0.7
 
 # --- Modell-Hyperparameter ---
@@ -45,7 +45,7 @@ SEQ_LEN = 64  # Längere Sequenzen für Text sinnvoll
 EMBEDDING_DIM = 128 # Dimension der Vektoren nach dem Embedding (= Input für BioLayer)
 HIDDEN_DIM = 384 # Eventuell vergrößern
 VOCAB_SIZE = -1 # Wird aus Daten geladen!
-NUM_TOKEN_PROTOTYPES = 72 # Mehr Prototypen können helfen
+NUM_TOKEN_PROTOTYPES = 384 # Mehr Prototypen können helfen
 # BioLayer spezifisch
 HEBBIAN_LR = 0.01 # Eventuell anpassen
 SPIKE_THRESHOLD = 0.45
@@ -1282,7 +1282,7 @@ if __name__ == "__main__":
                 model.update_trainable(global_step, epoch_lr, weight_decay=WEIGHT_DECAY)
                 model.update_special()
 
-                if num_train_batches % 100 == 0:
+                if num_train_batches % 1500 == 0:
                     print(f"  [Epoche {epoch+1}, Batch {num_train_batches}/{len(train_inputs)//BATCH_SIZE}] Loss: {loss:.6f}")
 
             avg_train_loss = epoch_train_loss / num_train_batches if num_train_batches > 0 else 0.0
