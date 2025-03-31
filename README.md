@@ -694,7 +694,3 @@ gleichzeitig jedoch **kommerzielle Nutzung ausdrücklich ausschließen**.
 Für kommerzielle Kooperationen oder Sonderlizenzen bitte Kontakt aufnehmen:  
 **support@ciphercore.de**
 ```
-
----
-
-Wenn du willst, formatiere ich diese vier Abschnitte direkt als `.md` Datei – oder bereite dir einen PDF-Export für deine README vor. Sag einfach Bescheid!
