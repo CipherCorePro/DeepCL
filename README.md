@@ -334,21 +334,373 @@ Die **Beispielausgabe demonstriert ein funktionierendes, GPU-beschleunigtes, hyb
 *   **Systematische Evaluation & Benchmarking.**
 *   **Optimierung der Parallelität:** Verbesserung der Kernel-Effizienz und Reduzierung von Synchronisationspunkten.
 
-## 12. Problembehandlung (Troubleshooting)
+---
 
-(Unverändert - siehe Abschnitt 13 der vorherigen detaillierten README für Fehler bei Kompilierung, Laden, Laufzeit, NaN/Inf etc.)
+## 12. Zukünftige Forschungsrichtungen & Erweiterungen
 
-## 13. Glossar
+Das Framework ist bewusst **modular und erweiterbar** aufgebaut. Zukünftige Forschung könnte sich unter anderem mit folgenden Aspekten beschäftigen:
 
-(Unverändert - enthält Erklärungen für OpenCL-Begriffe, NN-Operationen, Bio-Konzepte, Dimensionen etc.)
+- **Explizite Integration von `W_hebb` in die Vorwärtsausbreitung**  
+  Erforschung von Methoden, wie die in `W_hebb` gelernten assoziativen Muster aktiv im Forward-Pass genutzt werden können. Optionen wären z. B.:
+  - Additive Modulation der Hidden-Aktivierungen
+  - Kontextsensitive Maskierung oder Gewichtung
+  - Einfluss auf die Prototypenzuordnung
 
-## 14. Beiträge (Contributing)
+- **Verwendung der Prototypen-Zuweisung im Modell**  
+  Die dynamischen Token-Zuweisungen (`token_indices`) könnten:
+  - Als Input für weitere Layer dienen (z. B. zusätzlich zur Embedding-Schicht)
+  - Für adaptive Regularisierung oder Aufmerksamkeit genutzt werden
 
-(Unverändert - Einladung zur Mitarbeit, Fokus auf Fehlerbehebungen, Kernel-Optimierung, neue Features, Analysewerkzeuge etc.)
+- **Erweiterung der Bio-inspirierten Dynamik**  
+  - Integration komplexerer Spiking- oder Adaptionsmechanismen
+  - Simulation dendritischer Prozesse oder kortikaler Plastizität
 
-## 15. Lizenz
+- **Hybridisierung mit Transformer- oder RNN-Elementen**  
+  Kombination klassischer Architekturen mit dem assoziativ-modulierenden Layer
 
-(z.B. MIT License)
-Dieses Projekt steht unter der MIT-Lizenz.
+- **Einsatz in praktischen Aufgaben mit Struktur**  
+  - Autoencoding, Klassifikation, Sequenzanomalieerkennung etc.
+  - Vergleich mit klassischen Architekturen
+
+- **Performance-Tuning & GPU-Kernel-Optimierung**  
+  - Nutzung von `float4`, `local memory`, `loop unrolling`
+  - Minimierung globaler Synchronisation
+  - Dynamische Kernel-Scheduling-Techniken
 
 ---
+
+## 13. Problembehandlung (Troubleshooting)
+
+### ❗ Kompilierungsprobleme (C/OpenCL)
+
+- **Header nicht gefunden:**  
+  Stelle sicher, dass `CL/cl.h` verfügbar ist – ggf. Pfade in `Makefile`/Compilerflags anpassen
+
+- **Fehler beim Linken:**  
+  Achte auf korrekte `-lOpenCL` oder `.lib`-Einbindung
+
+---
+
+### ❗ DLL-/Shared Object-Fehler (Python)
+
+- **`OSError: cannot load library`**  
+  → Pfad korrekt? DLL/SO im `CL/`-Verzeichnis?  
+  → Compilerarchitektur (x64 vs. x86) stimmt mit Python-Version überein?
+
+---
+
+### ❗ OpenCL Runtime-Fehler
+
+- **`clCreateContext` schlägt fehl:**  
+  → OpenCL-Treiber korrekt installiert?  
+  → GPU wird vom System erkannt?
+
+- **`CL_OUT_OF_RESOURCES` / `CL_MEM_OBJECT_ALLOCATION_FAILURE`:**  
+  → Modell oder Batch zu groß für GPU. Speicherbedarf reduzieren.
+
+---
+
+### ❗ NaN / Inf im Training
+
+- **Ursachen:**  
+  - Zu hohe Lernrate  
+  - Spikes zu aktiv (Schwellwert anpassen)  
+  - Instabiler Hebbian-LR
+
+- **Lösungen:**  
+  - `GRADIENT_CLIP_VALUE` setzen  
+  - Initiale LR halbieren  
+  - Debug-Ausgaben aktivieren und `tensor.norm()` kontrollieren
+
+---
+
+## 14. Glossar
+
+| Begriff                  | Bedeutung |
+|--------------------------|-----------|
+| `cl_mem`                 | Speicherobjekt in OpenCL (äquivalent zu GPU-Tensor-Handle)  
+| `ctypes`                 | Python-Modul zur Anbindung von C-Bibliotheken  
+| `Hebbian Learning`       | Lernregel: "What fires together wires together"  
+| `Prototypen`             | Repräsentative Vektoren für Cluster im Hidden Space  
+| `GELU`                   | Aktivierungsfunktion ähnlich ReLU, aber glatter  
+| `Spiking`                | Binarisierung der Aktivierung zur Simulierung neuronaler Impulse  
+| `OpenCL`                 | C-basierte API für parallele GPU-Programmierung  
+| `Command Queue`          | FIFO für Kernel und Speicheroperationen auf der GPU  
+| `Kernel`                 | Ausführbare Funktion auf der GPU  
+| `Gradient Clipping`      | Begrenzung der Gradienten-Norm zur Stabilisierung  
+| `Embedding`              | Zuordnung von Symbolen zu kontinuierlichen Vektoren  
+| `Checkpoint`             | Zwischenspeicherung von Modellparametern während des Trainings  
+
+---
+
+# CipherCore FAQ – Häufig gestellte Fragen
+
+Willkommen beim CipherCore FAQ! Hier finden Sie Antworten auf häufig gestellte Fragen zu unserem Framework für hybride neuronale Netzwerke.  Wir helfen Ihnen gerne weiter, damit Sie unsere Technologie optimal nutzen können.
+
+---
+
+# CipherCore FAQ – Häufig gestellte Fragen
+
+Willkommen beim CipherCore FAQ! Hier finden Sie Antworten auf häufig gestellte Fragen zu unserem Framework für hybride neuronale Netzwerke.  Wir helfen Ihnen gerne weiter, damit Sie unsere Technologie optimal nutzen können.
+
+---
+**🧠 Allgemein & Architektur**
+---
+
+---
+**Frage 1:** Was genau ist das Ziel dieses Frameworks?
+---
+---
+**Antwort:**  Unser Framework dient als experimentelle Forschungsplattform für hybride neuronale Netzwerke. Der Fokus liegt auf der Kombination von klassischen gradientenbasierten Lernmethoden (wie Adam) mit bio-inspirierten Mechanismen wie Hebb’schem Lernen und Prototypenkodierung. Diese Kombination wird parallel auf der GPU ausgeführt, um maximale Effizienz und Flexibilität zu gewährleisten.
+---
+
+---
+**Frage 2:** Was bedeutet „bio-inspiriert“ in diesem Kontext?
+---
+---
+**Antwort:**  „Bio-inspiriert“ bezieht sich auf Lernregeln, die neurobiologischen Prinzipien nachempfunden sind.  Konkret meinen wir:
+
+*   **Hebbian Learning:**  Lernregeln, die auf lokalen Korrelationen zwischen Neuronenaktivitäten basieren. Neuronen, die gleichzeitig aktiv sind, verstärken ihre Verbindung.
+*   **Prototypen:**  Die Bildung repräsentativer Clusterstrukturen.  Das Netzwerk lernt, typische Muster (Prototypen) im Datenraum zu erkennen und zu speichern.
+---
+
+---
+**Frage 3:** Was unterscheidet dieses Framework von typischen PyTorch/TensorFlow-Modellen?
+---
+---
+**Antwort:**  Ein wesentlicher Unterschied ist, dass unser Framework *keine* High-Level-Frameworks wie PyTorch oder TensorFlow verwendet. Stattdessen setzen wir auf ein eigenes, performantes C/OpenCL-Backend. Dieses Backend ist über `ctypes` angebunden und ermöglicht uns:
+
+*   **Maximale Kontrolle:**  Wir haben direkten Zugriff auf alle Aspekte der Netzwerkarchitektur und des Lernprozesses.
+*   **Direkte GPU-Nutzung:**  Wir können die GPU optimal ausnutzen, auch für nicht-gradientenbasierte Updates, die in bio-inspirierten Modellen häufig vorkommen.
+---
+
+---
+**Frage 4:** Warum haben Sie sich für OpenCL anstelle von CUDA entschieden?
+---
+---
+**Antwort:**  Die Wahl von OpenCL hat strategische Gründe:
+
+*   **Plattformunabhängigkeit:** OpenCL ist ein offener Standard und funktioniert auf einer breiten Palette von Hardware, einschließlich AMD-, Intel- und NVIDIA-GPUs sowie CPUs.  Dies erhöht die Zugänglichkeit und Flexibilität unseres Frameworks erheblich.
+*   **Tiefergehende Kontrolle:** OpenCL erlaubt uns eine detailliertere Steuerung von Speicherverwaltung, Synchronisation und paralleler Ausführung auf der GPU. Dies ist entscheidend für die Implementierung komplexer, bio-inspirierter Lernmechanismen.
+---
+
+---
+**⚙️ Setup & Installation**
+---
+
+---
+**Frage 5:** Welche Hardware wird für den Betrieb des Frameworks empfohlen?
+---
+---
+**Antwort:**  Für eine optimale Leistung empfehlen wir folgende Hardware:
+
+*   **GPU:**  Eine Grafikkarte mit mindestens OpenCL 1.2 Unterstützung und 4–8 GB VRAM. AMD-Grafikkarten mit mehreren Compute Units (Recheneinheiten) sind besonders gut geeignet.
+*   **CPU:**  CPUs mit OpenCL-Support sind ebenfalls nutzbar, jedoch ist die Performance im Vergleich zu GPUs geringer.
+---
+
+---
+**Frage 6:** Ich erhalte keine Ausgabe nach dem Start – was kann ich tun?
+---
+---
+**Antwort:**  Wenn Sie keine Ausgabe sehen, überprüfen Sie bitte folgende Punkte:
+
+*   **Kompilierung:** Stellen Sie sicher, dass Sie die `.dll` (Windows) oder `.so` (Linux) Datei korrekt kompiliert haben.
+*   **Startskript:**  Starten Sie das Trainingsskript `char_level_network.py` immer aus dem Hauptordner des Frameworks heraus.
+*   **Eingabedatei:**  Vergewissern Sie sich, dass eine valide Eingabedatei `input.txt` im Hauptordner vorhanden ist.
+*   **OpenCL SDK:**  Ist das OpenCL Software Development Kit (SDK) auf Ihrem System installiert? Beispiele sind ROCm (für AMD) oder das Intel SDK.  Stellen Sie sicher, dass die Umgebungsvariablen korrekt gesetzt sind, damit das System die OpenCL-Bibliotheken findet.
+---
+
+---
+**Frage 7:** Die C-Kernel lassen sich nicht kompilieren. Welche Ursachen kann das haben?
+---
+---
+**Antwort:**  Kompilierungsfehler der C-Kernel deuten meist auf Probleme mit den OpenCL-Headern hin:
+
+*   **Fehlender Header:**  Der OpenCL Header `CL/cl.h` wird vom Compiler nicht gefunden.  Stellen Sie sicher, dass die Include-Pfade Ihres Compilers korrekt konfiguriert sind und auf den Ordner mit den OpenCL-Headern verweisen (Teil des OpenCL SDK).
+*   **Verlinkung (Windows):** Unter Windows muss zusätzlich die Bibliothek `OpenCL.lib` beim Linken angegeben werden, damit der Compiler die benötigten OpenCL-Funktionen findet.
+---
+
+---
+**🚀 Training & Ausführung**
+---
+
+---
+**Frage 8:** Wie starte ich das Training des Netzwerks?
+---
+---
+**Antwort:**  Das Training starten Sie über die Kommandozeile mit folgendem Befehl:
+
+```bash
+python char_level_network.py
+```
+
+Beim Start des Skripts werden Sie aufgefordert, eine GPU auszuwählen. Wählen Sie in der Regel den Index `1` für eine dedizierte Grafikkarte (GPU 0 ist oft die integrierte GPU).  Beobachten Sie die Konsolenausgabe während des Trainings.
+---
+
+---
+**Frage 9:** Woran erkenne ich, ob das Modell lernt und Fortschritte macht?
+---
+---
+**Antwort:**  Es gibt mehrere Indikatoren für den Lernfortschritt:
+
+*   **Validation-Loss:**  Der Wert des Validation-Loss sollte über die Epochen hinweg tendenziell sinken. Ein niedrigerer Loss deutet auf eine bessere Modellleistung auf den Validierungsdaten hin.
+*   **Genauigkeit (Accuracy):**  Die Genauigkeit gibt den Anteil der korrekt vorhergesagten nächsten Zeichen an. Auch dieser Wert sollte idealerweise im Laufe des Trainings steigen.
+*   **Generierte Texte:**  Beachten Sie die Textbeispiele, die nach jeder Epoche generiert werden.  Mit fortschreitendem Training sollten diese Texte kohärenter und sinnvoller werden.
+---
+
+---
+**Frage 10:** Wie interpretiere ich die Trainingsausgabe in der Konsole?
+---
+---
+**Antwort:**  Die Konsolenausgabe während des Trainings liefert Ihnen wichtige Informationen:
+
+*   **Loss:**  Der aktuelle Trainings-Loss. Ein niedrigerer Wert ist besser.
+*   **Accuracy:**  Die Trainingsgenauigkeit (Anteil korrekt vorhergesagter Zeichen). Ein höherer Wert ist besser.
+*   **Validation Loss:** Der Loss berechnet auf dem Validierungsdatensatz. Wichtig, um Overfitting zu erkennen.
+*   **Validation Accuracy:** Die Genauigkeit auf dem Validierungsdatensatz.
+*   **Duration:**  Die Rechenzeit pro Epoche (in Sekunden).  Dies gibt Ihnen einen Hinweis auf die GPU-Auslastung und die Effizienz des Trainings.
+---
+
+---
+**Frage 11:** Kann ich ein unterbrochenes Training fortsetzen?
+---
+---
+**Antwort:**  Ja, das Training ist so ausgelegt, dass es fortgesetzt werden kann.  Die besten Modellzustände (Checkpoints) werden automatisch als `.pkl` Dateien gespeichert. Wenn Sie das Skript erneut starten, erkennt es automatisch den besten gespeicherten Zustand und setzt das Training von dort fort.
+---
+
+---
+**Frage 12:** Wie kann ich generierten Text ausgeben lassen, um die Kreativität des Modells zu testen?
+---
+---
+**Antwort:**  Das Framework generiert automatisch nach jeder Trainingsepoche einen kurzen Textschnipsel als Beispiel.  Zusätzlich können Sie die Funktion `generate_text(prompt)` im Code manuell aufrufen.  Das Argument `prompt` erlaubt es Ihnen, einen Starttext vorzugeben, auf dessen Basis der Text generiert wird.
+---
+
+---
+**🧬 Bio-Inspired Mechanismen**
+---
+
+---
+**Frage 13:** Was genau macht die Gewichtsmatrix `W_hebb` im Netzwerk?
+---
+---
+**Antwort:**  `W_hebb` implementiert Hebbianisches Lernen. Diese Gewichtsmatrix speichert Assoziationen zwischen Neuronen, die häufig gleichzeitig aktiv sind.  Im Detail:
+
+*   **Assoziationen:**  `W_hebb` repräsentiert synaptische Verbindungen, die durch Hebb’sche Regeln verstärkt werden.
+*   **Lokales Lernen:**  Die Aktualisierung von `W_hebb` erfolgt *nicht* durch Backpropagation, sondern durch eine lokale, Hebb’sche Lernregel.
+*   **Korrelationsbasiert:**  Die Regel basiert auf der Korrelation der Aktivität von prä- und postsynaptischen Neuronen.
+*   **Parallele GPU-Berechnung:** Die Aktualisierung von `W_hebb` wird effizient und parallel auf der GPU durchgeführt.
+---
+
+---
+**Frage 14:** Wie funktionieren die Prototypen im Framework?
+---
+---
+**Antwort:**  Die Prototypen dienen der diskreten Kodierung des Hidden Space:
+
+*   **Zuordnung:** Jeder Hidden-State (die interne Repräsentation des Netzwerks) wird dem ähnlichsten Prototyp zugeordnet. Die Ähnlichkeit wird über das Dot-Produkt (Skalarprodukt) berechnet.
+*   **Kontinuierliche Anpassung:**  Die Prototypen selbst werden kontinuierlich an die eingehenden Hidden-States angepasst, ähnlich dem K-Means Algorithmus.
+*   **Diskrete Kodierung:**  Durch die Zuordnung zu Prototypen entsteht eine diskrete Repräsentation des Hidden Space.  Dies kann als eine Form der Kategorisierung oder Clusterbildung interpretiert werden.
+---
+
+---
+**Frage 15:** Welchen Zweck hat der Spiking-Mechanismus im Netzwerk?
+---
+---
+**Antwort:**  Der Spiking-Mechanismus erzeugt eine binäre, spärliche Version der neuronalen Aktivierungen:
+
+*   **Binäre Aktivierung (Spikes):**  Anstelle kontinuierlicher Aktivierungswerte werden binäre „Spikes“ erzeugt (0 oder 1).
+*   **Sparsamkeit (Sparsity):**  Typischerweise sind nur wenige Neuronen gleichzeitig aktiv, was zu einer spärlichen Repräsentation führt.
+*   **Biologische Plausibilität:**  Spiking-Aktivität ist biologisch plausibler als kontinuierliche Aktivierung und wird in vielen Modellen des Gehirns verwendet.
+*   **Eingang für Hebbian Learning:** Die Spikes dienen als Eingangssignal für das Hebbian Learning in `W_hebb`.
+---
+
+---
+**🛠️ Debugging & Performance**
+---
+
+---
+**Frage 16:**  Mein Training läuft unerwartet langsam. Was könnten die Ursachen sein?
+---
+---
+**Antwort:**  Eine langsame Trainingsgeschwindigkeit kann verschiedene Gründe haben:
+
+*   **GPU-Auswahl:**  Überprüfen Sie, ob Sie beim Start des Skripts die *dedizierte* GPU (Index `1`) anstelle der integrierten GPU (Index `0`) ausgewählt haben. Die integrierte GPU ist in der Regel deutlich langsamer.
+*   **CPU-Prototypen-Update:**  Stellen Sie sicher, dass die Option `USE_GPU_PROTOTYPE_UPDATE` auf `True` gesetzt ist. Wenn sie auf `False` steht, werden die Prototypen auf der CPU aktualisiert, was die Trainingszeit erheblich verlängern kann.
+*   **Batchgröße und Sequenzlänge:**  Sehr große Batchgrößen (`BATCH_SIZE`) oder Sequenzlängen (`SEQ_LEN`) können den Speicherbedarf erhöhen und das Training verlangsamen, insbesondere wenn der GPU-Speicher knapp wird.
+---
+
+---
+**Frage 17:** Wie erkenne ich, ob Speicherprobleme (VRAM) das Training beeinträchtigen?
+---
+---
+**Antwort:**  Hinweise auf Speicherprobleme sind:
+
+*   **Abbruch oder Einfrieren:**  Das Training bricht unerwartet ab oder friert ein, ohne Fehlermeldung (oder mit einer Out-of-Memory Fehlermeldung, falls das System diese korrekt erfasst).
+*   **Langsame Performance:**  Obwohl das Training nicht abbricht, kann es extrem langsam werden, da das System beginnt, Daten zwischen VRAM und Hauptspeicher auszulagern (Swapping).
+
+Zur Überprüfung der VRAM-Auslastung können Sie folgende Tools verwenden:
+
+*   **radeontop:**  Für AMD-Grafikkarten unter Linux.
+*   **clinfo:**  Ein generelles OpenCL-Informations-Tool, das auch Speichernutzung anzeigen kann.
+*   **Adrenalin (AMD) / NVIDIA System Monitor:**  Grafische Tools für Windows, die die GPU-Auslastung anzeigen.
+
+Um Speicherprobleme zu beheben, reduzieren Sie die Werte für `HIDDEN_DIM` (Größe der Hidden Layer) oder `BATCH_SIZE`.
+---
+
+---
+**Frage 18:** Ich sehe `NaN` oder `Inf` Werte in der Trainingsausgabe. Was kann ich tun?
+---
+---
+**Antwort:**  `NaN` (Not a Number) oder `Inf` (Infinity) Werte deuten auf numerische Instabilitäten hin, oft durch zu große Gradienten oder Lernraten verursacht.  Mögliche Lösungsansätze:
+
+*   **DEBUG_PRINTS aktivieren:**  Setzen Sie `DEBUG_PRINTS = True` im Code. Dies aktiviert zusätzliche Ausgaben, die helfen können, die Quelle der `NaN`/`Inf` Werte zu lokalisieren.
+*   **Gradient Clipping erhöhen:**  Erhöhen Sie den Wert von `GRADIENT_CLIP_VALUE`. Gradient Clipping begrenzt die maximale Größe der Gradienten und verhindert so, dass sie zu groß werden und Instabilitäten verursachen.
+*   **Lernraten senken:**  Reduzieren Sie die Lernraten (Learning Rates) für die verschiedenen Lernmechanismen im Netzwerk.  Zu hohe Lernraten können zu Überschwingen und Instabilitäten führen.
+*   **Speicherzustände validieren:**  Verwenden Sie NumPy Funktionen wie `np.isnan(tensor).any()` oder `np.isinf(tensor).any()`, um die Speicherzustände (Tensoren) auf `NaN` oder `Inf` Werte zu überprüfen und die Stelle im Code zu finden, wo diese entstehen.
+---
+
+---
+**Frage 19:** Die Prototypenzuordnung ist unausgeglichen – was bedeutet das und was kann ich tun?
+---
+---
+**Antwort:**  Eine unausgeglichene Prototypenzuordnung bedeutet, dass einige Prototypen überproportional viele Hidden-States zugeordnet bekommen, während andere kaum oder gar nicht genutzt werden. Im Extremfall fallen alle Samples auf denselben Prototyp.  Dies deutet darauf hin, dass der Prototypenraum nicht effektiv segmentiert wird und die Prototypen nicht die Vielfalt der Hidden-States repräsentieren.  Mögliche Lösungsansätze:
+
+*   **Prototypen-LR anpassen:**  Experimentieren Sie mit der Lernrate für die Prototypen (`PROTOTYPE_LR`).  Eine zu hohe oder zu niedrige Lernrate kann zu einer unausgeglichenen Zuordnung führen.
+*   **Dot-Produkt normalisieren:**  Normalisieren Sie das Dot-Produkt zwischen Hidden-State und Prototyp, bevor Sie die Zuordnung vornehmen.  Dies kann helfen, die Skalenunterschiede zu reduzieren und eine gleichmäßigere Zuordnung zu fördern.
+*   **Initialisierung zufälliger gestalten:**  Machen Sie die Initialisierung der Prototypen zufälliger oder verwenden Sie eine andere Initialisierungsstrategie.  Eine gute Initialisierung kann helfen, von Anfang an eine bessere Raumabdeckung zu erreichen.
+---
+## 15. Lizenz
+
+```text
+Copyright (c) 2025 Ralf Krümmel
+
+Diese Software darf kostenlos genutzt, modifiziert und weitergegeben werden, 
+sofern die folgenden Bedingungen eingehalten werden:
+
+1. **Nicht-kommerzielle Nutzung:**  
+   Die Nutzung, Modifikation oder Weitergabe dieser Software 
+   ist ausschließlich für **nicht-kommerzielle** Zwecke gestattet.
+
+2. **Namensnennung:**  
+   In allen abgeleiteten Werken oder Veröffentlichungen, 
+   die auf diesem Code basieren, muss der ursprüngliche Autor 
+   **Ralf Krümmel** genannt werden.
+
+3. **Keine Haftung:**  
+   Die Software wird „wie sie ist“ bereitgestellt – **ohne Garantie** 
+   für Funktion, Eignung oder Fehlerfreiheit.
+
+4. **Keine proprietäre Re-Lizensierung:**  
+   Es ist **nicht gestattet**, diese Software oder abgeleitete Werke 
+   unter restriktiveren Lizenzen weiterzugeben oder kommerziell zu vermarkten.
+
+Diese Lizenz soll **Forschung, Lehre und offene Weiterentwicklung** ermöglichen, 
+gleichzeitig jedoch **kommerzielle Nutzung ausdrücklich ausschließen**.
+
+Für kommerzielle Kooperationen oder Sonderlizenzen bitte Kontakt aufnehmen:  
+**support@ciphercore.de**
+```
+
+---
+
+Wenn du willst, formatiere ich diese vier Abschnitte direkt als `.md` Datei – oder bereite dir einen PDF-Export für deine README vor. Sag einfach Bescheid!
