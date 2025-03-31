@@ -1,8 +1,8 @@
 # OpenCL Neural Network Kernel Library & Hybrid Bio-Inspired Language Model Framework
 
 **Version:** 0.3.0 (Experimental Research Code)
-**Datum:** [Aktuelles Datum einfügen, z.B. 2023-10-27]
-**Autoren/Maintainer:** [Dein Name/Organisation, falls zutreffend]
+**Datum:** [2025-03-31]
+**Autoren/Maintainer:** [Ralf Krümmel/CipherCore]
 
 **Warnung:** Dies ist ein fortgeschrittenes Framework für Forschungszwecke. Es kombiniert Standard-Deep-Learning-Techniken mit experimentellen, bio-inspirierten Mechanismen auf einer GPU-beschleunigten OpenCL-Basis. Der Code ist komplex und erfordert ein tiefes Verständnis der beteiligten Konzepte. Er ist funktional, aber nicht notwendigerweise für Produktionsumgebungen optimiert oder vollständig auf Robustheit getestet.
 
