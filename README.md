@@ -397,7 +397,134 @@ python char_level_network.py
 *   Optionales Laden eines Checkpoints.
 *   Training beginnt, Fortschritt wird geloggt (Epoche, Batch, Loss (Original & optional Shaped), Validierungs-Loss, Validierungs-Genauigkeit, Dauer). Mit `Strg+C` abbrechen (Checkpoint wird gespeichert).
 
-### Beispielhafte Trainingsausgabe
+
+
+```mermaid
+graph TD
+    Start[Start Training Skript] --> LoadData{Daten laden/vorverarbeiten?};
+
+    subgraph Einmalige Initialisierung
+        LoadData -- "Ja (oder .npz fehlt)" --> Preprocess["preprocess_char_data()<br/>(Text -> IDs, Split, Save .npz/.pkl)"];
+        LoadData -- "Nein (.npz existiert)" --> LoadNPZ;
+        Preprocess --> LoadNPZ["load_processed_data()<br/>(Lade Arrays & Vokabular)"];
+        LoadNPZ --> InitModel["Initialisiere MyModel<br/>(Layers, Buffers)"];
+        InitModel --> LoadCheckpoint["model.load_checkpoint()<br/>(Lade letzten Zustand inkl. Epoche, Schritt, Adam-States, best_loss)"];
+        LoadCheckpoint --> InitScheduler["Initialisiere Lernraten-Scheduler<br/>(Setze Start-LR basierend auf geladener Epoche)"];
+        InitScheduler --> CreateGPUArrays["Erstelle leere GPU Batch-Arrays<br/>(input_gpu, targets_gpu, sampling_input_gpu)"];
+        CreateGPUArrays --> OptionalShapeGPU["Optional: Erstelle & fülle<br/>critical_pairs_gpu (wenn Loss Shaping aktiv)"];
+    end
+
+    OptionalShapeGPU --> EpochLoopStart(Epoch Loop Start);
+
+    subgraph "Pro Epoche"
+        EpochLoopStart --> SetTrainMode["model.train_mode()"];
+        SetTrainMode --> TrainBatchLoopStart{Train Batch Loop};
+
+        subgraph "Training Phase (pro Batch)"
+            TrainBatchLoopStart -- "Nächster Batch" --> GetTrainBatch["create_batches() (Train, mit Shuffle & Padding)"];
+            GetTrainBatch --> SetBatchShapeTrain["model.set_current_batch_shape(B, S)"];
+            SetBatchShapeTrain --> DataToGPUTrain["Schreibe Batch (Inputs/Targets) auf GPU"];
+            DataToGPUTrain --> ForwardTrain["model.forward(input_gpu) -> logits_gpu"];
+            ForwardTrain --> LossAndBackward["model.compute_loss_and_backward()<br/>1. criterion.forward() -> orig_loss, dLogits<br/>2. OPTIONAL: Loss Shaping -> shaped_loss<br/>3. model.backward(dLogits)"];
+            LossAndBackward -- "NaN/Inf?" --> CheckLoss{Loss OK?};
+            CheckLoss -- "Ja" --> ClipGrad["model.clip_all_gradients()"];
+            ClipGrad --> UpdateTrainable["model.update_trainable()<br/>(Adam-Update für W/b aller Layers)"];
+            UpdateTrainable --> UpdateSpecial["model.update_special()<br/>(Hebbian & Prototypen Update)"];
+            UpdateSpecial --> AccumTrainLoss["Sammle orig./shaped Train Loss"];
+            AccumTrainLoss --> TrainBatchLoopStart;
+            CheckLoss -- "Nein (NaN/Inf)" --> SkipUpdates["Überspringe Updates für diesen Batch"];
+            SkipUpdates --> TrainBatchLoopStart;
+        end
+
+        %% Ende Training Batch Loop
+        AccumTrainLoss -- "Alle Train Batches fertig" --> CalcAvgTrainLoss["Berechne Ø Train Loss (Orig./Shaped)"];
+        CalcAvgTrainLoss --> SetEvalMode["model.eval_mode()"];
+
+        SetEvalMode --> ValBatchLoopStart{Validation Batch Loop};
+
+        subgraph "Validierungs Phase (pro Batch)"
+            ValBatchLoopStart -- "Nächster Batch" --> GetValBatch["create_batches() (Valid, ohne Shuffle, mit Padding)"];
+            GetValBatch --> SetBatchShapeVal["model.set_current_batch_shape(B, S)"];
+            SetBatchShapeVal --> DataToGPUVal["Schreibe Val Batch (Inputs/Targets) auf GPU"];
+            DataToGPUVal --> ForwardVal["model.forward(input_gpu) -> logits_gpu"];
+            ForwardVal --> LossVal["criterion.forward(logits_gpu, ...) -> orig_val_loss<br/>(Beachtet Padding)"];
+            LossVal -- "NaN/Inf?" --> CheckLossVal{Loss OK?};
+            CheckLossVal -- "Ja" --> AccuracyVal["calculate_accuracy(logits_gpu, targets_np)"];
+            AccuracyVal --> AccumValMetrics["Sammle Val Loss & Accuracy"];
+            AccumValMetrics --> ValBatchLoopStart;
+            CheckLossVal -- "Nein (NaN/Inf)" --> SkipValBatch["Ignoriere Val Batch"];
+            SkipValBatch --> ValBatchLoopStart;
+        end
+
+        %% Ende Validation Batch Loop
+        AccumValMetrics -- "Alle Val Batches fertig" --> CalcAvgValMetrics["Berechne Ø Val Loss & Accuracy"];
+        CalcAvgValMetrics --> SaveLastCheckpoint["model.save_checkpoint(checkpoint_path)<br/>(Speichere *immer* den letzten Zustand)"];
+        SaveLastCheckpoint --> CheckBestLoss{Neuer bester Val Loss?};
+        CheckBestLoss -- "Ja" --> SaveBestCheckpoint["model.save_checkpoint(best_checkpoint_path)<br/>(Speichere Zustand als besten)"];
+        CheckBestLoss -- "Nein" --> LRSchedulerStep;
+        SaveBestCheckpoint --> LRSchedulerStep["scheduler.step(epoch + 1)<br/>(Passe LR für nächste Epoche an)"];
+
+        LRSchedulerStep --> GenerateText["generate_text()<br/>(Generiere Beispieltext mit aktuellem Modell)"];
+        GenerateText --> EpochLoopEnd{Alle Epochen fertig?};
+        EpochLoopEnd -- "Nein" --> EpochLoopStart;
+    end
+
+    EpochLoopEnd -- "Ja" --> EndTraining[Training Beendet];
+    EndTraining --> FreeResources["Gebe alle GPU-Ressourcen frei<br/>(model.free(), GPUTensor.free(), shutdown_gpu())"];
+    FreeResources --> Stop[Programm Ende];
+
+    %% Styling
+    style Start fill:#d1e7dd,stroke:#0f5132,color:#000
+    style LoadData fill:#cfe2ff,stroke:#0a58ca,color:#000,shape:rhombus
+    style Preprocess fill:#fff3cd,stroke:#664d03,color:#000
+    style LoadNPZ fill:#fff3cd,stroke:#664d03,color:#000
+    style InitModel fill:#fff3cd,stroke:#664d03,color:#000
+    style LoadCheckpoint fill:#fff3cd,stroke:#664d03,color:#000
+    style InitScheduler fill:#fff3cd,stroke:#664d03,color:#000
+    style CreateGPUArrays fill:#fff3cd,stroke:#664d03,color:#000
+    style OptionalShapeGPU fill:#fff3cd,stroke:#664d03,color:#000
+
+    style EpochLoopStart fill:#f8d7da,stroke:#842029,color:#000,shape:cylinder
+    style SetTrainMode fill:#e2d9f3,stroke:#491289,color:#000
+    style TrainBatchLoopStart fill:#e2d9f3,stroke:#491289,color:#000,shape:hexagon
+    style GetTrainBatch fill:#e2d9f3,stroke:#491289,color:#000
+    style SetBatchShapeTrain fill:#e2d9f3,stroke:#491289,color:#000
+    style DataToGPUTrain fill:#e2d9f3,stroke:#491289,color:#000
+    style ForwardTrain fill:#e2d9f3,stroke:#491289,color:#000
+    style LossAndBackward fill:#e2d9f3,stroke:#491289,color:#000,font-weight:bold
+    style CheckLoss fill:#e2d9f3,stroke:#491289,color:#000,shape:rhombus
+    style SkipUpdates fill:#fde2e4,stroke:#b02a37,color:#000
+    style ClipGrad fill:#e2d9f3,stroke:#491289,color:#000
+    style UpdateTrainable fill:#e2d9f3,stroke:#491289,color:#000,font-weight:bold
+    style UpdateSpecial fill:#e2d9f3,stroke:#491289,color:#000
+    style AccumTrainLoss fill:#e2d9f3,stroke:#491289,color:#000
+
+    style CalcAvgTrainLoss fill:#d1e7dd,stroke:#0f5132,color:#000
+    style SetEvalMode fill:#d1e7dd,stroke:#0f5132,color:#000
+    style ValBatchLoopStart fill:#d1e7dd,stroke:#0f5132,color:#000,shape:hexagon
+    style GetValBatch fill:#d1e7dd,stroke:#0f5132,color:#000
+    style SetBatchShapeVal fill:#d1e7dd,stroke:#0f5132,color:#000
+    style DataToGPUVal fill:#d1e7dd,stroke:#0f5132,color:#000
+    style ForwardVal fill:#d1e7dd,stroke:#0f5132,color:#000
+    style LossVal fill:#d1e7dd,stroke:#0f5132,color:#000,font-weight:bold
+    style CheckLossVal fill:#d1e7dd,stroke:#0f5132,color:#000,shape:rhombus
+    style SkipValBatch fill:#fde2e4,stroke:#b02a37,color:#000
+    style AccuracyVal fill:#d1e7dd,stroke:#0f5132,color:#000
+    style AccumValMetrics fill:#d1e7dd,stroke:#0f5132,color:#000
+
+    style CalcAvgValMetrics fill:#cfe2ff,stroke:#0a58ca,color:#000
+    style SaveLastCheckpoint fill:#cfe2ff,stroke:#0a58ca,color:#000
+    style CheckBestLoss fill:#cfe2ff,stroke:#0a58ca,color:#000,shape:rhombus
+    style SaveBestCheckpoint fill:#cfe2ff,stroke:#0a58ca,color:#000,font-weight:bold
+    style LRSchedulerStep fill:#cfe2ff,stroke:#0a58ca,color:#000
+    style GenerateText fill:#cfe2ff,stroke:#0a58ca,color:#000
+    style EpochLoopEnd fill:#f8d7da,stroke:#842029,color:#000,shape:rhombus
+
+    style EndTraining fill:#6c757d,stroke:#1c1f23,color:#fff
+    style FreeResources fill:#6c757d,stroke:#1c1f23,color:#fff
+    style Stop fill:#6c757d,stroke:#1c1f23,color:#fff
+```
+### Trainingsausgabe
 ```bash
 [Python] C-Treiber-Bibliothek geladen von: G:\c_dll_nn\CipherCore_OpenCl.dll
 [Python] CTypes-Definition für execute_embedding_backward_gpu (via non-atomic two-pass) geladen.
